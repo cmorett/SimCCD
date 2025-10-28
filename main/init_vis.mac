@@ -1,0 +1,11 @@
+#
+# Set some default verbose
+/control/verbose 2
+/control/saveHistory
+/run/verbose 2
+
+# Initialize kernel
+/run/initialize
+#
+# Visualization setting
+/control/execute C:\Users\cmore\geant4\geant4-v11.3.2\program_files\share\Geant4\geant4make\SimCCD_Log_Complete\main\vis.mac

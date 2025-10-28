@@ -1,0 +1,32 @@
+// ...existing code...
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/**",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/materials/include",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/run/include",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/geometry/solids/CSG/include",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/build/source/global/include",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/build/source/geometry/include",
+                "C:/root_v6.36.04/include"
+            ],
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/**",
+                    "C:/root_v6.36.04/include"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            },
+            "defines": [],
+            "windowsSdkVersion": "10.0.19041.0",
+            "compilerPath": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.29.30133/bin/HostX64/x64/cl.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-msvc-x64"
+        }
+    ],
+    "version": 4
+}

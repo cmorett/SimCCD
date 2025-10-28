@@ -1,0 +1,32 @@
+/control/verbose 0
+/run/verbose 0
+/tracking/verbose 0
+#/stepping/verbose 0
+/run/printProgress 0
+
+#/vis/open OGLIX 800x800-0+0
+#/vis/drawVolume
+
+#/vis/viewer/set/viewpointVector 0 -3 -1
+
+#/vis/viewer/zoom 1.2
+#/vis/scene/add/trajectories
+
+#/testhadr/phys/thermalScattering  false
+
+#/B02/gun/rndm off
+#/gun/energy 5 GeV
+
+#/analysis/setFileName muons_001
+#/analysis/ntuple/setFileName 0 muons_001
+#/analysis/ntuple/setFileName 1 muons_001
+
+/control/getEnv OUTROOTFILE
+/control/echo {OUTROOTFILE}
+
+/analysis/setFileName {OUTROOTFILE}
+/analysis/ntuple/setFileName 0 {OUTROOTFILE}
+/analysis/ntuple/setFileName 1 {OUTROOTFILE}
+
+/run/beamOn 10000
+

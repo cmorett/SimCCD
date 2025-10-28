@@ -1,0 +1,51 @@
+#/control/verbose 0
+#/run/verbose 0
+#/tracking/verbose 0
+
+
+/vis/open OGL 
+#/vis/open HepRepFile
+#/vis/open VRML2FILE
+# Draw geometry:
+/vis/drawVolume
+
+#/vis/scene/create
+#/vis/scene/add/volume
+#/vis/sceneHandler/attach
+#/vis/viewer/flush
+
+/vis/scene/add/trajectories
+/vis/scene/endOfEventAction accumulate
+
+#/vis/viewer/set/viewpointThetaPhi 70 30 deg
+#/vis/viewer/set/viewpointVector 0 -3 -1
+#/vis/viewer/set/viewpointVector 3 1 1
+#/vis/viewer/clearCutawayPlanes
+#/vis/viewer/addCutawayPlane 0 0 0 m 1 0 0
+/vis/viewer/zoom 0.8
+/vis/scene/add/axes 0 0 0 20 cm
+
+#color particle tracks
+/vis/modeling/trajectories/create/drawByParticleID 
+/vis/modeling/trajectories/drawByParticleID-0/set mu- red
+
+#particle Filter
+/vis/filtering/trajectories/create/particleFilter
+/vis/filtering/trajectories/particleFilter-0/add gamma
+/vis/filtering/trajectories/particleFilter-0/invert true
+
+/vis/viewer/set/style surface
+/vis/viewer/set/viewpointThetaPhi 85 270 deg
+
+/vis/geometry/set/visibility World ! false
+
+#/gun/particle mu+
+#/gun/position 0 -50 -50 m
+#/gun/direction 0 1 1 
+
+#/B02/gun/rndm off
+#/gun/energy 5 GeV
+#/run/beamOn 1
+/generator/SmithActivation True
+
+#vis/ogl/printEPS

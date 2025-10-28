@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\cmore\geant4\geant4-v11.3.2\program_files\share\Geant4\geant4make\SimCCD_Log_Complete\build\CMakeFiles\891724ea2756e2f01b9f051fe93b56c5\generate.stamp.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{969EA876-9682-3800-AA2B-865F21FC561A}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

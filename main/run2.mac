@@ -1,0 +1,14 @@
+#Run to collect the deposited energy of muons that will decay 
+
+/generator/SmithActivation false 
+/gun/energy 200 MeV
+/gun/position 0.0 0.0 123.0 cm 
+/gun/direction 0.0 0.0 -1.0 
+
+/analysis/setFileName michels_file
+/analysis/ntuple/setFileName 0 michels_file
+/analysis/ntuple/setFileName 1 michels_file
+
+/run/beamOn 100
+
+
