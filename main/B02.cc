@@ -24,7 +24,7 @@ int main(int argc,char** argv)
 {
  
   G4UIExecutive* ui = nullptr;
-  if ( argc == 1 ) { ui = new G4UIExecutive(argc, argv); }
+  if ( argc == 1 ) { ui = new G4UIExecutive(); }
   
   // Choose the Random engine
   //
