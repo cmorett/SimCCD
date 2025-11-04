@@ -1,5 +1,0 @@
-C:/Users/cmore/geant4/geant4-v11.3.2/program_files/share/Geant4/geant4make/SimCCD_Log_Complete/build/CMakeFiles/b02_executable.dir
-C:/Users/cmore/geant4/geant4-v11.3.2/program_files/share/Geant4/geant4make/SimCCD_Log_Complete/build/CMakeFiles/B02.dir
-C:/Users/cmore/geant4/geant4-v11.3.2/program_files/share/Geant4/geant4make/SimCCD_Log_Complete/build/CMakeFiles/INSTALL.dir
-C:/Users/cmore/geant4/geant4-v11.3.2/program_files/share/Geant4/geant4make/SimCCD_Log_Complete/build/CMakeFiles/ALL_BUILD.dir
-C:/Users/cmore/geant4/geant4-v11.3.2/program_files/share/Geant4/geant4make/SimCCD_Log_Complete/build/CMakeFiles/ZERO_CHECK.dir

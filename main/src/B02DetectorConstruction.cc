@@ -25,6 +25,8 @@
 #include "G4VisAttributes.hh"
 #include "G4VSensitiveDetector.hh"
 #include "G4NistManager.hh"
+#include "G4SystemOfUnits.hh"
+#include "CADMesh.hh"
 
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
 
@@ -114,42 +116,9 @@ G4VPhysicalVolume* B02DetectorConstruction::Construct()
   // =========================================== //
   
 
-  // ================= Shielding ====================== //
-
-  G4VisAttributes blue(G4Colour::Blue());
-  G4VisAttributes cgray(G4Colour::Gray());
-  G4VisAttributes green(G4Colour::Green());
-  G4VisAttributes red(G4Colour::Red());
-  G4VisAttributes yellow(G4Colour::Yellow());
-
-  G4double size_box = 10;
-  G4double diag = sqrt(3 * size_box*size_box);
-
-  // Here we build the steel box //
-  G4double xbox_length = size_box; // cm
-  G4double ybox_length = size_box; // cm
-  G4double zbox_length = size_box; // cm
-  // // G4double distance_front = 11.43; // cm
-  auto box_st = new G4Box("box_st", xbox_length*cm, ybox_length*cm, zbox_length*cm);
-  auto box_stLV = new G4LogicalVolume(box_st, Steel, "box_stLV");
-  // //new G4PVPlacement(0, G4ThreeVector(0*cm, boxside/2-wth/2, 0*cm), yfLV1, "yf1", logicWorld, false, 0, fCheckOverlaps);
-  new G4PVPlacement(0, G4ThreeVector(0*cm, 0*cm, 0*cm), box_stLV, "box_st", logicWorld, false, 0, true);
-
-  xbox_length = size_box - 2.54/2; // cm
-  ybox_length = size_box - 2.54/2; // cm
-  zbox_length = size_box - 2.54/2; // cm
-  // G4double distance_front = 11.43; // cm
-  auto vacuum_st = new G4Box("vacuum_st", xbox_length*1.0*cm, ybox_length*1.0*cm, zbox_length*1.0*cm);
-  auto vacuum_stLV = new G4LogicalVolume(vacuum_st, Vacuum, "vacuum_stLV");
-  // new G4PVPlacement(0, G4ThreeVector(0*cm, boxside/2-wth/2, 0*cm), yfLV1, "yf1", logicWorld, false, 0, fCheckOverlaps);
-  new G4PVPlacement(0, G4ThreeVector(0*cm, 0*cm, 0*cm), vacuum_stLV, "vacuum_stLV", box_stLV, false, 0, true);
-
-  box_stLV->SetVisAttributes(blue);
-  // vacuum_stLV->SetVisAttributes(yellow);
-
   // =============== Constructor of CCD (non active volume) ===================== //
 
-  G4double pixel_size = 0.0015; // cm
+  //G4double pixel_size = 0.0015; // cm
 
   // G4double XLength = 1.917; // cm
   // G4double YLength = 1.587; // cm
@@ -164,9 +133,9 @@ G4VPhysicalVolume* B02DetectorConstruction::Construct()
   // G4double YLength = 529 * pixel_size; // cm (Debe ser la dimensión con mayor tamaño)
   // G4double ZLength = 0.0725*1.; // cm
 
-  G4double XLength = 250 * pixel_size; // cm
-  G4double YLength = 529 * pixel_size; // cm (Debe ser la dimensión con mayor tamaño)
-  G4double ZLength = 0.0725; // cm
+  //G4double XLength = 250 * pixel_size; // cm
+  //G4double YLength = 529 * pixel_size; // cm (Debe ser la dimensión con mayor tamaño)
+  //G4double ZLength = 0.0725; // cm
   // ============================================================================ //
 
   // ================= Para CONNIE ================== //
@@ -184,25 +153,69 @@ G4VPhysicalVolume* B02DetectorConstruction::Construct()
 
   
   //Sibox = new G4Box("ccd", HalfWorldLength, HalfWorldLength, HalfWorldLength);
-  Sibox = new G4Box("CCD", 0.5*XLength*cm, 0.5*YLength*cm, 0.5*ZLength*cm);
-  SiLogic = new G4LogicalVolume(Sibox, Si, "CCD", 0, 0, 0);
+  //Sibox = new G4Box("CCD", 0.5*XLength*cm, 0.5*YLength*cm, 0.5*ZLength*cm);
+  //SiLogic = new G4LogicalVolume(Sibox, Si, "CCD", 0, 0, 0);
   // new G4PVPlacement(0, G4ThreeVector(0., 0., 0.), SiLogic, "CCD", vacuum_stLV, false, 0,true);
-  new G4PVPlacement(0, G4ThreeVector(0., 0., 0.), SiLogic, "CCD", logicWorld, false, 0,true);
+  //new G4PVPlacement(0, G4ThreeVector(0., 0., 0.), SiLogic, "CCD", logicWorld, false, 0,true);
 
-  fSiLogic = SiLogic;
+  //fSiLogic = SiLogic;
 
   // ======================================================== //
 
-  // =================== Sensitive detectors ================= //	
-  G4SDManager* SDman = G4SDManager::GetSDMpointer();
-  G4String barSDname = "CCD/SD";
-  B02BarSD* aBarSD = new B02BarSD( barSDname );
-  SDman->AddNewDetector( aBarSD );
-  SetSensitiveDetector("CCD", aBarSD, true);
-  G4VisAttributes* BarVisAtt   = new G4VisAttributes (G4Colour(1,1,1));
-  BarVisAtt->SetForceAuxEdgeVisible( true );
-  SiLogic->SetVisAttributes(BarVisAtt);
-  
+    // ======== CAD enclosure (Path A: CADMesh • STL in mm) ========
+  {
+    // Materials for the enclosure. Adjust to your real hardware if needed:
+    // - If your lids/shell/tube are stainless, use the custom "StainlessSteel" you already create above.
+    // - Otherwise, this uses Aluminum as a sensible default.
+    auto nist = G4NistManager::Instance();
+    G4Material* enclosureMat = nist->FindOrBuildMaterial("G4_Al"); // change to StainlessSteel if appropriate
+
+    // Optional: world bigger, if needed for large shells (your current fWorldLength is fine; bump if you outgrow it)
+    // fWorldLength = 1.0*m;  // if you decide to enlarge world, also rebuild solidWorld with the new size.
+
+    const G4bool checkOverlaps = true;
+
+    struct Part {
+      const char* file;
+      const char* name;
+    } parts[] = {
+      {"assets/cad/back_lid.stl",  "back_lid"},
+      {"assets/cad/front_lid.stl", "front_lid"},
+      {"assets/cad/left_lid.stl",  "left_lid"},
+      {"assets/cad/right_lid.stl", "right_lid"},
+      {"assets/cad/outer_shell.stl","outer_shell"},
+      {"assets/cad/tube.stl",      "tube"},
+    };
+
+    // Because you exported from Onshape in mm **and** the parts are already in assembly position,
+    // we place each one at the world origin with no extra rotation/offset.
+    // If anything looks misaligned later, we can switch to a single OBJ-with-groups export, or apply per-part transforms.
+    for (const auto& p : parts) {
+      auto mesh  = CADMesh::TessellatedMesh::FromSTL(p.file);
+      // mesh->SetScale(1.0);  // mm → mm (no scale needed). Uncomment if you ever export in different units.
+      // mesh->SetOffset(0.0*mm, 0.0*mm, 0.0*mm); // not needed if assembly coords are baked-in
+
+      auto solid = mesh->GetSolid(); // G4TessellatedSolid*
+      auto lv    = new G4LogicalVolume(solid, enclosureMat, p.name);
+
+      // Nice-to-have: make it visible and solid in the viewer
+      auto vis = new G4VisAttributes(G4Colour(0.8,0.8,0.9));
+      vis->SetForceSolid(true);
+      lv->SetVisAttributes(vis);
+
+      new G4PVPlacement(
+        /*pRot=*/nullptr,
+        /*tlate=*/G4ThreeVector(),  // (0,0,0)
+        /*pCurrentLogical=*/lv,
+        /*pName=*/p.name,
+        /*pMotherLogical=*/logicWorld,
+        /*pMany=*/false,
+        /*pCopyNo=*/0,
+        /*checkOverlaps=*/checkOverlaps
+      );
+    }
+  }
+
  return physiWorld;
  
 }

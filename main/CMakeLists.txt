@@ -36,6 +36,7 @@ file(GLOB sources ${PROJECT_SOURCE_DIR}/src/*.cc)
 file(GLOB headers ${PROJECT_SOURCE_DIR}/include/*.hh)
 # Remove analysis.cc from the sources list
 list(REMOVE_ITEM sources ${PROJECT_SOURCE_DIR}/src/B02AnalysisManager.cc)
+file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})
 
 
 
@@ -44,7 +45,16 @@ list(REMOVE_ITEM sources ${PROJECT_SOURCE_DIR}/src/B02AnalysisManager.cc)
 #
 add_executable(b02_executable B02.cc ${sources} ${headers})
 target_include_directories(b02_executable PRIVATE ${Geant4_INCLUDE_DIRS})
-target_link_libraries(b02_executable ${Geant4_LIBRARIES})                         
+target_include_directories(b02_executable PRIVATE ${CMAKE_SOURCE_DIR}/../third_party/CADMesh)
+target_link_libraries(b02_executable ${Geant4_LIBRARIES})
+
+
+add_custom_command(TARGET b02_executable POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_SOURCE_DIR}/assets"
+    "$<TARGET_FILE_DIR:b02_executable>/assets"
+)
+
 
 #----------------------------------------------------------------------------
 # Copy all scripts to the build directory, i.e. the directory in which we
