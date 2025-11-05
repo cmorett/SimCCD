@@ -24,6 +24,8 @@ endif()
 include(${Geant4_USE_FILE})
 include_directories(${PROJECT_SOURCE_DIR}/include)
 
+find_package(assimp CONFIG REQUIRED)
+
 
 add_definitions(-DG4ANALYSIS_USE)
 
@@ -45,8 +47,7 @@ file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})
 #
 add_executable(b02_executable B02.cc ${sources} ${headers})
 target_include_directories(b02_executable PRIVATE ${Geant4_INCLUDE_DIRS})
-target_include_directories(b02_executable PRIVATE ${CMAKE_SOURCE_DIR}/../third_party/CADMesh)
-target_link_libraries(b02_executable ${Geant4_LIBRARIES})
+target_link_libraries(b02_executable PRIVATE assimp::assimp ${Geant4_LIBRARIES})
 
 
 add_custom_command(TARGET b02_executable POST_BUILD

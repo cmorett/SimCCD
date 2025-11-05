@@ -16,7 +16,9 @@
                 "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/include",
                 "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/include/Geant4",
                 "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/share/Geant4",
-                "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/global/management/include"
+                "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/global/management/include",
+                "C:/vcpkg/installed/x64-windows/include",
+                "C:/vcpkg/installed/x64-windows/include/assimp"
             ],
             "browse": {
                 "path": [
@@ -25,7 +27,8 @@
                     "C:/root_v6.36.04/include",
                     "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/include",
                     "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/include/Geant4",
-                    "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/global/management/include"
+                    "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/global/management/include",
+                    "C:/vcpkg/installed/x64-windows/include"
                 ],
                 "limitSymbolsToIncludedHeaders": true
             },

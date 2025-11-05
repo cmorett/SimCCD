@@ -26,7 +26,16 @@
 #include "G4VSensitiveDetector.hh"
 #include "G4NistManager.hh"
 #include "G4SystemOfUnits.hh"
-#include "CADMesh.hh"
+#include "G4Exception.hh"
+#include "G4TessellatedSolid.hh"
+#include "G4TriangularFacet.hh"
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+#include <string>
+#include <limits>
+#include <algorithm>
+
 
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
 
@@ -97,7 +106,7 @@ G4VPhysicalVolume* B02DetectorConstruction::Construct()
     Steel->AddElement(elNi, 0.10);  // 10% Nickel
     Steel->AddElement(elC,  0.02);  // 2% Carbon
     
-  fWorldLength = 10*cm;
+  fWorldLength = 2.0*m;
   fRockLength = 0.80*fWorldLength;
   fRock2Length = 0.50*fWorldLength;
   fBarDiameter = 0.3*fRock2Length; 
@@ -160,63 +169,91 @@ G4VPhysicalVolume* B02DetectorConstruction::Construct()
 
   //fSiLogic = SiLogic;
 
-  // ======================================================== //
+  #include <fstream>
+  #include <sstream>
 
-    // ======== CAD enclosure (Path A: CADMesh • STL in mm) ========
+  // ======== Load assembly.dae via Assimp and create one logical volume per mesh ========
+  // ...existing code...
   {
-    // Materials for the enclosure. Adjust to your real hardware if needed:
-    // - If your lids/shell/tube are stainless, use the custom "StainlessSteel" you already create above.
-    // - Otherwise, this uses Aluminum as a sensible default.
-    auto nist = G4NistManager::Instance();
-    G4Material* enclosureMat = nist->FindOrBuildMaterial("G4_Al"); // change to StainlessSteel if appropriate
+    Assimp::Importer importer;
+    const aiScene* scene = importer.ReadFile("assets/cad/assembly.dae",
+                               aiProcess_Triangulate |
+                               aiProcess_JoinIdenticalVertices |
+                               aiProcess_PreTransformVertices |
+                               aiProcess_FlipWindingOrder);
 
-    // Optional: world bigger, if needed for large shells (your current fWorldLength is fine; bump if you outgrow it)
-    // fWorldLength = 1.0*m;  // if you decide to enlarge world, also rebuild solidWorld with the new size.
+    if (!scene) {
+      std::string err = std::string("Failed to load assembly.dae: ") + importer.GetErrorString();
+      G4Exception("B02DetectorConstruction::Construct", "AssimpImport",
+                  FatalException, G4String(err));
+    }
 
+    G4cout << "Assimp: mNumMeshes = " << scene->mNumMeshes << G4endl;
+
+    G4Material* defaultMat = G4NistManager::Instance()->FindOrBuildMaterial("G4_Al");
     const G4bool checkOverlaps = true;
+    // OnShape exported units -> meters, convert to mm for Geant4
+    const G4double meshScale = 1000.0 * mm;
 
-    struct Part {
-      const char* file;
-      const char* name;
-    } parts[] = {
-      {"assets/cad/back_lid.stl",  "back_lid"},
-      {"assets/cad/front_lid.stl", "front_lid"},
-      {"assets/cad/left_lid.stl",  "left_lid"},
-      {"assets/cad/right_lid.stl", "right_lid"},
-      {"assets/cad/outer_shell.stl","outer_shell"},
-      {"assets/cad/tube.stl",      "tube"},
-    };
+    // debug bboxes (optional)
+    for (unsigned int mdbg = 0; mdbg < scene->mNumMeshes; ++mdbg) {
+      aiMesh* amdbg = scene->mMeshes[mdbg];
+      if (!amdbg || amdbg->mNumVertices==0) continue;
+      double minx=1e300, miny=1e300, minz=1e300;
+      double maxx=-1e300, maxy=-1e300, maxz=-1e300;
+      for (unsigned int v=0; v<amdbg->mNumVertices; ++v) {
+        const aiVector3D &vv = amdbg->mVertices[v];
+        minx = std::min(minx, (double)vv.x); maxx = std::max(maxx, (double)vv.x);
+        miny = std::min(miny, (double)vv.y); maxy = std::max(maxy, (double)vv.y);
+        minz = std::min(minz, (double)vv.z); maxz = std::max(maxz, (double)vv.z);
+      }
+      G4cout << "  mesh[" << mdbg << "] name=\"" 
+             << (amdbg->mName.length?amdbg->mName.C_Str():"<no-name>")
+             << "\" raw bbox x["<<minx<<","<<maxx<<"] y["<<miny<<","<<maxy<<"] z["<<minz<<","<<maxz<<"]"
+             << G4endl;
+      G4cout << "    scaled bbox (mm): x["<<(minx*meshScale/mm)<<" mm,"<<(maxx*meshScale/mm)<<" mm] "
+             << " y["<<(miny*meshScale/mm)<<" mm,"<<(maxy*meshScale/mm)<<" mm] "
+             << " z["<<(minz*meshScale/mm)<<" mm,"<<(maxz*meshScale/mm)<<" mm]"
+             << G4endl;
+    }
 
-    // Because you exported from Onshape in mm **and** the parts are already in assembly position,
-    // we place each one at the world origin with no extra rotation/offset.
-    // If anything looks misaligned later, we can switch to a single OBJ-with-groups export, or apply per-part transforms.
-    for (const auto& p : parts) {
-      auto mesh  = CADMesh::TessellatedMesh::FromSTL(p.file);
-      // mesh->SetScale(1.0);  // mm → mm (no scale needed). Uncomment if you ever export in different units.
-      // mesh->SetOffset(0.0*mm, 0.0*mm, 0.0*mm); // not needed if assembly coords are baked-in
+    // create a G4TessellatedSolid for each aiMesh and place it at origin (PreTransformVertices baked transforms)
+    for (unsigned int m = 0; m < scene->mNumMeshes; ++m) {
+      aiMesh* am = scene->mMeshes[m];
+      if (!am || am->mNumFaces==0) continue;
 
-      auto solid = mesh->GetSolid(); // G4TessellatedSolid*
-      auto lv    = new G4LogicalVolume(solid, enclosureMat, p.name);
+      G4String meshName = (am->mName.length > 0) ? G4String(am->mName.C_Str()) :
+                                                   G4String("mesh_") + G4String(std::to_string(m));
+      G4TessellatedSolid* tess = new G4TessellatedSolid(meshName);
 
-      // Nice-to-have: make it visible and solid in the viewer
-      auto vis = new G4VisAttributes(G4Colour(0.8,0.8,0.9));
+      for (unsigned int f = 0; f < am->mNumFaces; ++f) {
+        const aiFace& face = am->mFaces[f];
+        if (face.mNumIndices != 3) continue;
+        const aiVector3D &v0 = am->mVertices[face.mIndices[0]];
+        const aiVector3D &v1 = am->mVertices[face.mIndices[1]];
+        const aiVector3D &v2 = am->mVertices[face.mIndices[2]];
+
+        G4ThreeVector a(v0.x * meshScale, v0.y * meshScale, v0.z * meshScale);
+        G4ThreeVector b(v1.x * meshScale, v1.y * meshScale, v1.z * meshScale);
+        G4ThreeVector c(v2.x * meshScale, v2.y * meshScale, v2.z * meshScale);
+
+        tess->AddFacet(new G4TriangularFacet(a, b, c, ABSOLUTE));
+      }
+
+      tess->SetSolidClosed(true);
+      if (tess->GetNumberOfFacets() == 0) { delete tess; continue; }
+
+      G4LogicalVolume* lv = new G4LogicalVolume(tess, defaultMat, meshName + "_lv");
+      G4VisAttributes* vis = new G4VisAttributes(G4Colour(0.6,0.6,0.9));
       vis->SetForceSolid(true);
       lv->SetVisAttributes(vis);
 
-      new G4PVPlacement(
-        /*pRot=*/nullptr,
-        /*tlate=*/G4ThreeVector(),  // (0,0,0)
-        /*pCurrentLogical=*/lv,
-        /*pName=*/p.name,
-        /*pMotherLogical=*/logicWorld,
-        /*pMany=*/false,
-        /*pCopyNo=*/0,
-        /*checkOverlaps=*/checkOverlaps
-      );
+      new G4PVPlacement(nullptr, G4ThreeVector(0,0,0), lv, meshName, logicWorld, false, static_cast<G4int>(m), checkOverlaps);
     }
   }
 
- return physiWorld;
+  return physiWorld;
+// ...existing code...
  
 }
 
