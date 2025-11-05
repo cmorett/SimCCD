@@ -11,16 +11,28 @@
                 "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/geometry/solids/CSG/include",
                 "C:/Users/cmore/geant4/geant4-v11.3.2/build/source/global/include",
                 "C:/Users/cmore/geant4/geant4-v11.3.2/build/source/geometry/include",
-                "C:/root_v6.36.04/include"
+                "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/interfaces/implementation/include",
+                "C:/root_v6.36.04/include",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/include",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/include/Geant4",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/share/Geant4",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/global/management/include"
             ],
             "browse": {
                 "path": [
                     "${workspaceFolder}/**",
                     "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/interfaces/implementation/include",
-                    "C:/root_v6.36.04/include"
+                    "C:/root_v6.36.04/include",
+                    "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/include",
+                    "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/include/Geant4",
+                    "C:/Users/cmore/geant4/geant4-v11.3.2/source/source/global/management/include"
                 ],
                 "limitSymbolsToIncludedHeaders": true
             },
+            "forcedInclude": [
+                "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/include/Geant4/G4Types.hh",
+                "C:/Users/cmore/geant4/geant4-v11.3.2/program_files/include/Geant4/G4String.hh"
+            ],
             "defines": [],
             "windowsSdkVersion": "10.0.19041.0",
             "compilerPath": "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.29.30133/bin/HostX64/x64/cl.exe",

@@ -2,5 +2,6 @@
     "files.associations": {
         "twoHistograms.C": "cpp",
         "muons.C": "cpp"
-    }
+    },
+    "cmake.ignoreCMakeListsMissing": true
 }
