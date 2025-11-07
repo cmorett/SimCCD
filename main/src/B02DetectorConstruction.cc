@@ -83,11 +83,6 @@ G4VPhysicalVolume* B02DetectorConstruction::Construct()
   auto Si = nistManager->FindOrBuildMaterial("G4_Si");
   Si->GetIonisation()->SetBirksConstant(0.09*cm/MeV); // El valor de 0.1 parece ajustar bastante bien el espectro pero se necesita mas estudio
   
-  
-  //auto Si = new G4Material("Si",   14.,  28.0849*g/mole,  2.3396*g/cm3);
-  //auto Si = G4Material::GetMaterial("G4_Si");
-  //G4Element *elSi = new G4Element("Silicon", "Si", 14., 28.0849*g/mole);
-  
   // === Vacuum definition == //
   G4double atomicNumber = 1.;
   G4double massOfMole = 1.008*g/mole;
@@ -95,10 +90,9 @@ G4VPhysicalVolume* B02DetectorConstruction::Construct()
   G4double temperature = 2.73*kelvin;
   G4double pressure = 3.e-18*pascal;
   auto Vacuum = new G4Material("interGalactic", atomicNumber, massOfMole, density, kStateGas, temperature, pressure);
-  // ======================= //
   
   
-   //Steel (density ~8.0 g/cm³)
+  // ===== Steel (density ~8.0 g/cm³)
   auto Steel = new G4Material("StainlessSteel", 8.0*g/cm3, 4);
   // Add elements with their fractional mass
     Steel->AddElement(elFe, 0.70);  // 70% Iron
@@ -110,6 +104,19 @@ G4VPhysicalVolume* B02DetectorConstruction::Construct()
   fRockLength = 0.80*fWorldLength;
   fRock2Length = 0.50*fWorldLength;
   fBarDiameter = 0.3*fRock2Length; 
+
+  // Copper // 
+  auto Cu = nistManager->FindOrBuildMaterial("G4_Cu");
+
+  // Aluminum // 
+  auto Al = nistManager->FindOrBuildMaterial("G4_Al");
+
+  // AlN //
+  G4Element* elAl = nistManager->FindOrBuildElement("Al");
+  G4Element* elN = nistManager->FindOrBuildElement("N");
+  G4Material* AlN = new G4Material("AluminumNitride", 3.26 * g/cm3, 2);
+  AlN->AddElement(elAl, 1);
+  AlN->AddElement(elN, 1);
      
   // World
   //------------------------------ 
