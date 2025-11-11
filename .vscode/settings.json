@@ -1,7 +1,9 @@
 {
     "files.associations": {
         "twoHistograms.C": "cpp",
-        "muons.C": "cpp"
+        "muons.C": "cpp",
+        "Parametros_muons.C": "cpp",
+        "fitConv_CCD_nores.C": "cpp"
     },
     "cmake.ignoreCMakeListsMissing": true
 }
