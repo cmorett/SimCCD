@@ -77,6 +77,8 @@ void B02PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
 
 	double phi = G4RandFlat::shoot(0.0, 2*3.1416);
 	// new R
+
+	/* 
 	
 	double X = R*sin(theta)*cos(phi);
 	double Y = R*sin(theta)*sin(phi);
@@ -93,6 +95,20 @@ void B02PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
 	
         particleGun->SetParticlePosition(G4ThreeVector(x0*cm,y0*cm,z0*cm));
         particleGun->SetParticleMomentumDirection(G4ThreeVector(-sin(theta)*cos(phi),-sin(theta)*sin(phi),-cos(theta)));
+
+	*/
+
+	double x_det = G4RandFlat::shoot(-px/2, px/2);
+	double y_det = G4RandFlat::shoot(-py/2, py/2);
+	// Compute starting position at height R (assuming detector at z=0):
+	double sinTheta = std::sin(theta);
+	double cosTheta = std::cos(theta);
+	double x0 = x_det - R * (sinTheta/cosTheta) * std::cos(phi);  // x_det minus H*tanθ*cosφ
+	double y0 = y_det - R * (sinTheta/cosTheta) * std::sin(phi);  // y_det minus H*tanθ*sinφ
+	double z0 = R;  // start at height = R
+	particleGun->SetParticlePosition(G4ThreeVector(x0*cm, y0*cm, z0*cm));
+	// Set momentum direction toward (x_det, y_det, 0):
+	particleGun->SetParticleMomentumDirection(G4ThreeVector(sinTheta*std::cos(phi),sinTheta*std::sin(phi),-cosTheta));
 
 
 // *****   Muons   *****
