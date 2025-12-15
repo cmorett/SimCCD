@@ -14,6 +14,7 @@
 // incorporate headers from B02AnalysisManager 
 #include "B02BarHit.hh"
 #include "G4PrimaryVertex.hh"
+#include "G4PrimaryParticle.hh"
 #include "G4SDManager.hh"
 #include "G4EventManager.hh"
 
@@ -74,6 +75,12 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
 
   // Get analysis manager
   auto analysisManager = G4AnalysisManager::Instance();
+
+  if (const auto primaryVertex = aEvent->GetPrimaryVertex(0)) {
+    if (const auto primaryParticle = primaryVertex->GetPrimary(0)) {
+      fEpri = primaryParticle->GetKineticEnergy();
+    }
+  }
  
  // accumulated length by muons.
  
@@ -84,7 +91,6 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
 ////    
     
   if(!analysisManager->GetH1(2)) return; // No histo booked !
-  if(!analysisManager->GetNtuple(0)) return;  
   
   G4int event_id = aEvent->GetEventID();  
   //
@@ -103,15 +109,19 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
   }
   
   G4HCofThisEvent* HCE = aEvent->GetHCofThisEvent();
-  B02BarHitsCollection* BHC = 
-  HCE ? (B02BarHitsCollection*)(HCE->GetHC(fBarCollID)) : 0;
+  B02BarHitsCollection* BHC =
+    HCE ? (B02BarHitsCollection*)(HCE->GetHC(fBarCollID)) : 0;
+
+  G4int n_hit = 0;
+  G4double EevtBar = -5.;
+  G4double WevtBar = -5.;
+  G4double GevtBar = 0.;
+  G4double ADCevtBar = 0.;
 
   if(BHC) {
-    G4int n_hit = BHC->entries();
-    G4double EevtBar = 0.;
-    G4double WevtBar = 0.;
-    G4double GevtBar = 0.;
-    G4double ADCevtBar = 0.;
+    n_hit = BHC->entries();
+    EevtBar = 0.;
+    WevtBar = 0.;
     for (G4int i=0;i<n_hit;i++) {
       G4double EhitBar = (*BHC)[i]->GetEdep();
       G4double WhitBar = (*BHC)[i]->GetEvis();
@@ -120,38 +130,25 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
       G4double ZhitBar = (*BHC)[i]->GetPos().getZ();
       G4double RhitBar = sqrt(XhitBar*XhitBar+YhitBar*YhitBar+ZhitBar*ZhitBar);
       analysisManager->FillH1(2,EhitBar/MeV);
-      //fEhitBar->fill(EhitBar/MeV);
       analysisManager->FillH1(3,XhitBar/cm);
-      //fXhitBar->fill(XhitBar/cm);     
       analysisManager->FillNtupleIColumn(0,0,event_id);
-      //fHitTuple->fill(0,event_id);
       analysisManager->FillNtupleDColumn(0,1,XhitBar/cm);
-      //fHitTuple->fill(1,XhitBar/cm);
       analysisManager->FillNtupleDColumn(0,2,YhitBar/cm);
-      //fHitTuple->fill(2,YhitBar/cm);
       analysisManager->FillNtupleDColumn(0,3,ZhitBar/cm);
-      //fHitTuple->fill(3,ZhitBar/cm);
       analysisManager->FillNtupleDColumn(0,4,RhitBar/cm);
-      //fHitTuple->fill(4,RhitBar/cm);
       analysisManager->FillNtupleDColumn(0,5,EhitBar/MeV);
-      //fHitTuple->fill(5,EhitBar/MeV);
       analysisManager->FillNtupleDColumn(0,6,WhitBar/MeV);
-      //fHitTuple->fill(6,WhitBar/MeV);
-      
-      //analysisManager->FillNtupleDColumn(0,7,fLength/cm);
-      
       analysisManager->AddNtupleRow(0);
-      //fHitTuple->addRow();
-   
 
       EevtBar += EhitBar;
       WevtBar += WhitBar;
     } // for i hits of hit collection
 
-    if (n_hit==0) {EevtBar = -5.; 
-                   WevtBar = -5.;
-    
-    } // if n_hit==0
+    if (n_hit==0) {
+      EevtBar = -5.;
+      WevtBar = -5.;
+    }
+  }
 
 		//double res = 0.05;                      //
 		//double sig = res*sqrt(550.0*WevtBar);   //
@@ -186,8 +183,6 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
       analysisManager->FillNtupleDColumn(1,9,fLength/cm);
       analysisManager->FillNtupleDColumn(1,10,fEnergy/MeV);
       analysisManager->AddNtupleRow(1);
-
-} // if BHC
 
 // analysisManager->FillNtupleDColumn(1,9,fLength/cm);
 // analysisManager->FillNtupleDColumn(1,10,fEnergy/MeV);

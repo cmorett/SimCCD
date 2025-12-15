@@ -72,6 +72,8 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
     G4double fMuonZImp = 0.0;
     G4double fMuonTheta = 0.0;
     G4double fMuonPhi = 0.0;
+    G4double fMuonEnergyGeV = 4.0;
+    G4bool fUseFixedEnergy = true;
    
    /* 
    G4double x;
