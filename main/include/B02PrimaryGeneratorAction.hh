@@ -26,6 +26,14 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
   public:
     void GeneratePrimaries(G4Event*);
     void SetRndmFlag(G4String val) { rndmFlag = val;}
+    G4double GetMuonX0() const { return fMuonX0; }
+    G4double GetMuonY0() const { return fMuonY0; }
+    G4double GetMuonZ0() const { return fMuonZ0; }
+    G4double GetMuonXImpact() const { return fMuonXImp; }
+    G4double GetMuonYImpact() const { return fMuonYImp; }
+    G4double GetMuonZImpact() const { return fMuonZImp; }
+    G4double GetMuonTheta() const { return fMuonTheta; }
+    G4double GetMuonPhi() const { return fMuonPhi; }
 
   private:
     void DefineCommands();
@@ -55,6 +63,15 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
 
     G4double fThetaMaxRad = 85.*deg;
     G4bool fUseCosmicMuons = true;
+    G4double fZImpactPlane = 0.0; // cm reference plane for impact point
+    G4double fMuonX0 = 0.0;
+    G4double fMuonY0 = 0.0;
+    G4double fMuonZ0 = 0.0;
+    G4double fMuonXImp = 0.0;
+    G4double fMuonYImp = 0.0;
+    G4double fMuonZImp = 0.0;
+    G4double fMuonTheta = 0.0;
+    G4double fMuonPhi = 0.0;
    
    /* 
    G4double x;
@@ -72,4 +89,3 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
 
 #endif
-

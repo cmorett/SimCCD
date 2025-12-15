@@ -58,30 +58,37 @@ void B02PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
   particleGun->SetParticleDefinition(G4ParticleTable::GetParticleTable()->FindParticle("mu-"));
 
      if (fUseCosmicMuons) {
-	
-	//double R = 550.0;
-
-	//double px = 480.0;
-	//double py = 480.0;
-
 	// Sample cos(theta) with pdf ~ mu^2 on [muMin, 1] via inverse CDF.
 	const G4double muMin = std::cos(fThetaMaxRad);
 	const G4double muMin3 = muMin * muMin * muMin;
 	const G4double mu = std::cbrt(G4UniformRand() * (1.0 - muMin3) + muMin3);
 	const G4double phi = G4RandFlat::shoot(0.0, twopi);
-	// new R
+	const G4double sinTheta = std::sqrt(std::max(0.0, 1.0 - mu * mu));
+	const G4double tanTheta = (mu > 0.0) ? sinTheta / mu : 0.0;
 
-	double x_det = G4RandFlat::shoot(-px/2, px/2);
-	double y_det = G4RandFlat::shoot(-py/2, py/2);
-	// Compute starting position at height R (assuming detector at z=0):
-	const double sinTheta = std::sqrt(std::max(0.0, 1.0 - mu * mu));
-	const double cosTheta = mu;
-	double x0 = x_det - R * (sinTheta/cosTheta) * std::cos(phi);
-	double y0 = y_det - R * (sinTheta/cosTheta) * std::sin(phi);
-	double z0 = R;  // start at height = R
-	particleGun->SetParticlePosition(G4ThreeVector(x0*cm, y0*cm, z0*cm));
-	// Set momentum direction toward (x_det, y_det, 0):
-	particleGun->SetParticleMomentumDirection(G4ThreeVector(sinTheta*std::cos(phi),sinTheta*std::sin(phi),-cosTheta));
+	const G4double xImp = G4RandFlat::shoot(-px / 2.0, px / 2.0);
+	const G4double yImp = G4RandFlat::shoot(-py / 2.0, py / 2.0);
+	const G4double zImp = fZImpactPlane;
+	const G4double z0 = zImp + R;
+	const G4double deltaZ = z0 - zImp;
+	const G4double cosPhi = std::cos(phi);
+	const G4double sinPhi = std::sin(phi);
+	const G4double x0 = xImp - deltaZ * tanTheta * cosPhi;
+	const G4double y0 = yImp - deltaZ * tanTheta * sinPhi;
+
+	fMuonX0 = x0 * cm;
+	fMuonY0 = y0 * cm;
+	fMuonZ0 = z0 * cm;
+	fMuonXImp = xImp * cm;
+	fMuonYImp = yImp * cm;
+	fMuonZImp = zImp * cm;
+	fMuonTheta = std::acos(mu);
+	fMuonPhi = phi;
+
+	particleGun->SetParticlePosition(G4ThreeVector(fMuonX0, fMuonY0, fMuonZ0));
+	particleGun->SetParticleMomentumDirection(G4ThreeVector(sinTheta * cosPhi,
+	                                                       sinTheta * sinPhi,
+	                                                       -mu));
 
 
 // *****   Muons   *****
@@ -161,6 +168,7 @@ void B02PrimaryGeneratorAction::DefineCommands()
   fMessenger->DeclareProperty("radius", R, "Radius of the hemisphere");
   fMessenger->DeclareProperty("px", px, "x-direction tangent plane");
   fMessenger->DeclareProperty("py", py, "y-direction tangent plane");
+  fMessenger->DeclareProperty("impactPlaneZ", fZImpactPlane, "Z position of the impact plane");
   fMessenger->DeclareProperty("SmithActivation", fUseCosmicMuons, "Enable or disable cosmic muon primaries");
   fMessenger->DeclarePropertyWithUnit("thetaMax", "deg", fThetaMaxRad, "Maximum zenith angle for cosmic muons");
   
