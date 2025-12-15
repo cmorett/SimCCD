@@ -53,8 +53,8 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
     // double px = 1.7; // cm
     // double py = 1.7; // cm
 
-    bool doSmith;
-    //G4double energy = 10*MeV;
+    G4double fThetaMaxRad = 85.*deg;
+    G4bool fUseCosmicMuons = true;
    
    /* 
    G4double x;
@@ -72,5 +72,4 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
 
 #endif
-
 

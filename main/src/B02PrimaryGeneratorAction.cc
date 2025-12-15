@@ -13,13 +13,17 @@
 #include "Randomize.hh"
 #include "G4GenericMessenger.hh"
 #include "G4GeneralParticleSource.hh"
+#include "G4PhysicalConstants.hh"
+
+#include <cmath>
+#include <algorithm>
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
 
 
 
 B02PrimaryGeneratorAction::B02PrimaryGeneratorAction( 
 							   B02DetectorConstruction* myDC)
-  :myDetector(myDC), rndmFlag("off")
+  :myDetector(myDC), rndmFlag("off"), fUseCosmicMuons(true)
  
 {
   G4int n_particle = 1;
@@ -51,60 +55,29 @@ B02PrimaryGeneratorAction::~B02PrimaryGeneratorAction()
 
 void B02PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
 {
+  particleGun->SetParticleDefinition(G4ParticleTable::GetParticleTable()->FindParticle("mu-"));
 
-     if (doSmith) {
+     if (fUseCosmicMuons) {
 	
 	//double R = 550.0;
 
 	//double px = 480.0;
 	//double py = 480.0;
 
-	double theta;
-	
-	double h = 61.5;
-
-	bool a = true;
-	while (a) {
-		double p = G4RandFlat::shoot(0.0, 1.0);
-		theta = G4RandFlat::shoot(0.0, 3.1416/2);
-		double q = pow(cos(theta), 2)*sin(theta);   // Muons
-//		double q = sin(theta)*(0.0545+pow(cos(theta), 2.5))/1.0545;   // Electrons
-//		double q = sin(theta)*(0.0266+pow(cos(theta), 2.6))/1.0266;   // Positrons
-//		double q = sin(theta)*(0.0402+pow(cos(theta), 3.0))/1.0402;   // Photons
-//		double q = sin(theta)*(0.276+pow(cos(theta), 2.4))/1.276;     // Neutrons
-		if (p<=q) a = false;
-		}
-
-	double phi = G4RandFlat::shoot(0.0, 2*3.1416);
+	// Sample cos(theta) with pdf ~ mu^2 on [muMin, 1] via inverse CDF.
+	const G4double muMin = std::cos(fThetaMaxRad);
+	const G4double muMin3 = muMin * muMin * muMin;
+	const G4double mu = std::cbrt(G4UniformRand() * (1.0 - muMin3) + muMin3);
+	const G4double phi = G4RandFlat::shoot(0.0, twopi);
 	// new R
-
-	/* 
-	
-	double X = R*sin(theta)*cos(phi);
-	double Y = R*sin(theta)*sin(phi);
-	double Z = R*cos(theta);
-	// down the hemisphere
-	double Z1 = R*cos(theta)-h;
-	
-	double u = G4RandFlat::shoot(-px/2, px/2);
-	double v = G4RandFlat::shoot(-py/2, py/2);
-	double x0 = X+u*cos(theta)*cos(phi)-v*sin(phi);
-	double y0 = Y+u*cos(theta)*sin(phi)+v*cos(phi);
-	double z0 = Z-u*sin(theta);
-	//double z0 = Z;
-	
-        particleGun->SetParticlePosition(G4ThreeVector(x0*cm,y0*cm,z0*cm));
-        particleGun->SetParticleMomentumDirection(G4ThreeVector(-sin(theta)*cos(phi),-sin(theta)*sin(phi),-cos(theta)));
-
-	*/
 
 	double x_det = G4RandFlat::shoot(-px/2, px/2);
 	double y_det = G4RandFlat::shoot(-py/2, py/2);
 	// Compute starting position at height R (assuming detector at z=0):
-	double sinTheta = std::sin(theta);
-	double cosTheta = std::cos(theta);
-	double x0 = x_det - R * (sinTheta/cosTheta) * std::cos(phi);  // x_det minus H*tanθ*cosφ
-	double y0 = y_det - R * (sinTheta/cosTheta) * std::sin(phi);  // y_det minus H*tanθ*sinφ
+	const double sinTheta = std::sqrt(std::max(0.0, 1.0 - mu * mu));
+	const double cosTheta = mu;
+	double x0 = x_det - R * (sinTheta/cosTheta) * std::cos(phi);
+	double y0 = y_det - R * (sinTheta/cosTheta) * std::sin(phi);
 	double z0 = R;  // start at height = R
 	particleGun->SetParticlePosition(G4ThreeVector(x0*cm, y0*cm, z0*cm));
 	// Set momentum direction toward (x_det, y_det, 0):
@@ -149,9 +122,9 @@ void B02PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
 	for (int j=0; j<ee; j++) {    // Construye la funcion de Smith en un arreglo
 		// Eu = pow(10, log10(Emin)+j*dE_log);
 		Eu = pow(10, Emin+j*dE_log);
-		Epu = (Eu+au*y0u*(1.0/cos(theta)-0.100))/ru;
-		Pmu = pow(0.100*cos(theta)*(1-(au*(y0u/cos(theta)-100)/(ru*Epu))),(Bmu/((ru*Epu+100*au)*cos(theta))));
-		ES[j] = Au*(pow(Epu,-gu))*Pmu*lpu*bu*jpu/(Epu*cos(theta)+bu*jpu);
+		Epu = (Eu+au*y0u*(1.0/cosTheta-0.100))/ru;
+		Pmu = pow(0.100*cosTheta*(1-(au*(y0u/cosTheta-100)/(ru*Epu))),(Bmu/((ru*Epu+100*au)*cosTheta)));
+		ES[j] = Au*(pow(Epu,-gu))*Pmu*lpu*bu*jpu/(Epu*cosTheta+bu*jpu);
 		}
 
 	int nbins = ee;
@@ -162,7 +135,7 @@ void B02PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent)
        particleGun->SetParticleEnergy(E*MeV);
        particleGun->GeneratePrimaryVertex(anEvent);
 
-      } // if doSmith
+      } // if fUseCosmicMuons
 
 
     else {
@@ -188,16 +161,7 @@ void B02PrimaryGeneratorAction::DefineCommands()
   fMessenger->DeclareProperty("radius", R, "Radius of the hemisphere");
   fMessenger->DeclareProperty("px", px, "x-direction tangent plane");
   fMessenger->DeclareProperty("py", py, "y-direction tangent plane");
-  fMessenger->DeclareProperty("SmithActivation", doSmith, "on or off smith");
+  fMessenger->DeclareProperty("SmithActivation", fUseCosmicMuons, "Enable or disable cosmic muon primaries");
+  fMessenger->DeclarePropertyWithUnit("thetaMax", "deg", fThetaMaxRad, "Maximum zenith angle for cosmic muons");
   
 }
-
-
-
-
-
-
-
-
-
-
