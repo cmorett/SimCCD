@@ -3,33 +3,39 @@
 #ifdef G4ANALYSIS_USE
 #include "B02AnalysisManager.hh"
 #endif
- 
+
 #include "B02EventAction.hh"
 
+#include <cmath>
+
 // New headers sep 2024
-#include "G4Event.hh"
-#include "G4RunManager.hh"
 #include "G4AnalysisManager.hh"
+#include "G4Event.hh"
+#include "G4EventManager.hh"
+#include "G4PrimaryParticle.hh"
+#include "G4PrimaryVertex.hh"
+#include "G4RunManager.hh"
+#include "G4SDManager.hh"
 #include "G4SystemOfUnits.hh"
 // incorporate headers from B02AnalysisManager 
 #include "B02BarHit.hh"
-#include "G4PrimaryVertex.hh"
-#include "G4PrimaryParticle.hh"
-#include "G4SDManager.hh"
-#include "G4EventManager.hh"
 
 
-B02EventAction::B02EventAction() 
-
+B02EventAction::B02EventAction()
+  : fB02EventAction(nullptr),
+    fBarCollID(-1),
+    fEpri(0.0),
+    fpx(0.0),
+    fpy(0.0),
+    fpz(0.0),
+    fp(0.0),
+    fth(0.0),
+    fph(0.0),
+    fLength(0.0),
+    fEnergy(0.0)
 {
-  // length distribution of muons 
-  fLength = 0.0;
-
-  // energy deposited by muons that will decay
-  fEnergy = 0.0;
-
   // set printing per each event
-  G4RunManager::GetRunManager()->SetPrintProgress(1); 
+  G4RunManager::GetRunManager()->SetPrintProgress(1);
 }
 
 
@@ -50,23 +56,38 @@ void B02EventAction::BeginOfEventAction(const G4Event* aEvent)
 
   //if(!fEpriHis)   return; // No histo booked !
   auto analysisManager = G4AnalysisManager::Instance();
-  
+
   if(!analysisManager->GetH1(0)) return; // no histo Booked !
 
-  G4PrimaryVertex* primaryVertex = aEvent->GetPrimaryVertex();
-  G4PrimaryParticle* primaryParticle = primaryVertex->GetPrimary();
+  const auto primaryVertex = aEvent->GetPrimaryVertex(0);
+  if (!primaryVertex) {
+    fEpri = 0.0;
+    fth = 0.0;
+    fph = 0.0;
+    return;
+  }
+
+  const auto primaryParticle = primaryVertex->GetPrimary(0);
+  if (!primaryParticle) {
+    fEpri = 0.0;
+    fth = 0.0;
+    fph = 0.0;
+    return;
+  }
+
   fEpri = primaryParticle->GetKineticEnergy();
-	fpx = primaryParticle->GetPx();
-	fpy = primaryParticle->GetPy();
-	fpz = primaryParticle->GetPz();
-	fp = sqrt(fpx*fpx+fpy*fpy+fpz*fpz);
-	fth = acos(-fpz/fp);
-	fph = atan2(fpy,fpx);
-	analysisManager->FillH1(0,fEpri/MeV);
-        //fEpriHis->fill(fEpri/GeV);
-	analysisManager->FillH1(1, cos(fth));
-	//fThHis->fill(cos(fth));
-	
+  const auto momentum = primaryParticle->GetMomentum();
+  const auto momentumMag2 = momentum.mag2();
+  if (momentumMag2 > 0.) {
+    fth = momentum.theta();
+    fph = momentum.phi();
+  } else {
+    fth = 0.0;
+    fph = 0.0;
+  }
+
+  analysisManager->FillH1(0,fEpri/MeV);
+  analysisManager->FillH1(1,std::cos(fth));
 }
 
 void B02EventAction::EndOfEventAction(const G4Event* aEvent)
@@ -76,11 +97,32 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
   // Get analysis manager
   auto analysisManager = G4AnalysisManager::Instance();
 
+  // Extract primary truth for ntuple filling
+  G4double muonX0 = 0.0;
+  G4double muonY0 = 0.0;
+  G4double muonZ0 = 0.0;
+  G4double thetaPri = 0.0;
+  G4double phiPri = 0.0;
+  G4double primaryEnergy = 0.0;
+
   if (const auto primaryVertex = aEvent->GetPrimaryVertex(0)) {
+    muonX0 = primaryVertex->GetX0();
+    muonY0 = primaryVertex->GetY0();
+    muonZ0 = primaryVertex->GetZ0();
+
     if (const auto primaryParticle = primaryVertex->GetPrimary(0)) {
-      fEpri = primaryParticle->GetKineticEnergy();
+      primaryEnergy = primaryParticle->GetKineticEnergy();
+      const auto momentum = primaryParticle->GetMomentum();
+      if (momentum.mag2() > 0.) {
+        thetaPri = momentum.theta();
+        phiPri = momentum.phi();
+      }
     }
   }
+
+  fEpri = primaryEnergy;
+  fth = thetaPri;
+  fph = phiPri;
  
  // accumulated length by muons.
  
@@ -182,6 +224,9 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
 	  //fEvtTuple->fill(8, n_hit);
       analysisManager->FillNtupleDColumn(1,9,fLength/cm);
       analysisManager->FillNtupleDColumn(1,10,fEnergy/MeV);
+      analysisManager->FillNtupleDColumn(1,11,muonX0/cm);
+      analysisManager->FillNtupleDColumn(1,12,muonY0/cm);
+      analysisManager->FillNtupleDColumn(1,13,muonZ0/cm);
       analysisManager->AddNtupleRow(1);
 
 // analysisManager->FillNtupleDColumn(1,9,fLength/cm);

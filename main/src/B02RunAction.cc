@@ -72,8 +72,11 @@ B02RunAction::B02RunAction(B02EventAction* b02eventAction )
   // Create 2nd ntuple (id = 1)
     //
     analysisManager->CreateNtuple("B02Evts", "B02Evts");
-    analysisManager->CreateNtupleIColumn("evtID"); // column Id = 0
-    analysisManager->CreateNtupleDColumn("EevtBar"); // column Id = 1
+    // Column order: 0 evtID, 1 EevtBar, 2 WevtBar, 3 GevtBar, 4 ADCevtBar,
+    // 5 EevtPri, 6 thetaPri, 7 phiPri, 8 nHitBar, 9 LengthMuLAr,
+    // 10 MuonDecayEdepLAr, 11 muonX0, 12 muonY0, 13 muonZ0.
+    analysisManager->CreateNtupleIColumn("evtID");
+    analysisManager->CreateNtupleDColumn("EevtBar");
     analysisManager->CreateNtupleDColumn("WevtBar");
     analysisManager->CreateNtupleDColumn("GevtBar");
     analysisManager->CreateNtupleDColumn("ADCevtBar");
@@ -81,8 +84,11 @@ B02RunAction::B02RunAction(B02EventAction* b02eventAction )
     analysisManager->CreateNtupleDColumn("thetaPri");
     analysisManager->CreateNtupleDColumn("phiPri");
     analysisManager->CreateNtupleIColumn("nHitBar");
-    analysisManager->CreateNtupleDColumn("LengthMuLAr");  // column Id = 7
-    analysisManager->CreateNtupleDColumn("MuonDecayEdepLAr"); 
+    analysisManager->CreateNtupleDColumn("LengthMuLAr");
+    analysisManager->CreateNtupleDColumn("MuonDecayEdepLAr");
+    analysisManager->CreateNtupleDColumn("muonX0");
+    analysisManager->CreateNtupleDColumn("muonY0");
+    analysisManager->CreateNtupleDColumn("muonZ0");
     analysisManager->FinishNtuple();
 
  
