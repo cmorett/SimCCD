@@ -1,0 +1,11 @@
+#pragma once
+
+// Generated at configure time. Do not edit the generated header directly.
+// Paths are absolute so the executable can find assets regardless of the
+// current working directory.
+namespace simccd {
+static constexpr const char* kSourceAssetsDir = "@SIMCCD_ASSETS_DIR@";
+static constexpr const char* kBinaryAssetsDir = "@SIMCCD_BUILD_ASSETS_DIR@";
+static constexpr const char* kCadRelativePath = "cad/assembly.dae";
+}  // namespace simccd
+

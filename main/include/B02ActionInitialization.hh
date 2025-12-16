@@ -31,12 +31,8 @@
 #define B02ActionInitialization_h 1
 
 #include "G4VUserActionInitialization.hh"
-#include "B02DetectorConstruction.hh"
-#include "B02PrimaryGeneratorAction.hh"
-#include "B02RunAction.hh"
-#include "B02EventAction.hh"
-#include "B02SteppingAction.hh"
-#include "B02ActionInitialization.hh"
+
+class B02DetectorConstruction;
 
 /// Action initialization class.
 
@@ -44,12 +40,15 @@
 class B02ActionInitialization : public G4VUserActionInitialization
 {
   public:
-      B02ActionInitialization();
+      explicit B02ActionInitialization(B02DetectorConstruction* detector);
      ~B02ActionInitialization();
     
   virtual void BuildForMaster() const ;
   virtual void Build() const;
   // void Build() const override;   
+
+  private:
+    B02DetectorConstruction* fDetector = nullptr;
 };
 
 

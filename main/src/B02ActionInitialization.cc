@@ -32,11 +32,14 @@
 #include "B02RunAction.hh"
 #include "B02EventAction.hh"
 #include "B02DetectorConstruction.hh"
+#include "B02SteppingAction.hh"
+#include "G4Exception.hh"
 
 
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
 
-B02ActionInitialization::B02ActionInitialization()
+B02ActionInitialization::B02ActionInitialization(B02DetectorConstruction* detector)
+: fDetector(detector)
 {}
 
 
@@ -55,7 +58,12 @@ void B02ActionInitialization::BuildForMaster() const
 void B02ActionInitialization::Build() const
 {
 
-B02DetectorConstruction *detConstruction = new B02DetectorConstruction();
+  // Use the detector instance passed from main to keep geometry/settings aligned
+  B02DetectorConstruction *detConstruction = fDetector;
+  if (!detConstruction) {
+    G4Exception("B02ActionInitialization::Build", "DetectorMissing", FatalException,
+                "DetectorConstruction pointer is null.");
+  }
 
   B02PrimaryGeneratorAction *genAction = new B02PrimaryGeneratorAction(detConstruction);
   SetUserAction(genAction); 
@@ -72,5 +80,3 @@ B02DetectorConstruction *detConstruction = new B02DetectorConstruction();
 }
 
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
-
-

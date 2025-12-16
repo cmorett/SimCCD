@@ -1,0 +1,10 @@
+# Common production macro when running with CAD geometry enabled.
+
+/analysis/setFileName cad_run
+/analysis/ntuple/setFileName 0 cad_run
+/analysis/ntuple/setFileName 1 cad_run
+
+/run/verbose 1
+/run/initialize
+/run/beamOn 10000
+

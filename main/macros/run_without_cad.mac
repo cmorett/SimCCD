@@ -1,0 +1,10 @@
+# Common production macro when running with the primitive geometry.
+
+/analysis/setFileName primitive_run
+/analysis/ntuple/setFileName 0 primitive_run
+/analysis/ntuple/setFileName 1 primitive_run
+
+/run/verbose 1
+/run/initialize
+/run/beamOn 10000
+

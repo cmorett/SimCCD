@@ -1,0 +1,39 @@
+{
+    "version": 5,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 23,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "vs2022",
+            "displayName": "Visual Studio 2022 (x64)",
+            "description": "Configure with the MSVC toolchain so we can link against the MSVC-built Geant4 SDK.",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "x64",
+            "toolset": {
+                "value": "host=x64"
+            },
+            "binaryDir": "${sourceDir}/build/vs2022",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/build/vs2022/install",
+                "WITH_GEANT4_UIVIS": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "vs2022-debug",
+            "configurePreset": "vs2022",
+            "displayName": "Build (Debug)",
+            "configuration": "Debug"
+        },
+        {
+            "name": "vs2022-release",
+            "configurePreset": "vs2022",
+            "displayName": "Build (Release)",
+            "configuration": "Release"
+        }
+    ]
+}

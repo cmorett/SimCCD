@@ -18,6 +18,7 @@
 #include "G4RunManager.hh"
 #include "B02BarSD.hh"
 #include "B02DetectorConstruction.hh"
+#include "G4Threading.hh"
 // modification to a new implementation based on runAction.cc class example B5
 
 
@@ -35,7 +36,7 @@ B02RunAction::B02RunAction(B02EventAction* b02eventAction )
   analysisManager->SetVerboseLevel(1);
 
   // Default settings
-  analysisManager->SetNtupleMerging(true);
+  analysisManager->SetNtupleMerging(G4Threading::IsMultithreadedApplication());
      // Note: merging ntuples is available only with Root output
   analysisManager->SetFileName("B02");
 

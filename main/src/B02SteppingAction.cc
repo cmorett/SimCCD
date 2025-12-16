@@ -49,14 +49,12 @@ void B02SteppingAction::UserSteppingAction(const G4Step* aStep)
        
        G4double edep = aStep->GetTotalEnergyDeposit();
        
-       const B02DetectorConstruction *detectorConstruction = static_cast<const B02DetectorConstruction*> (G4RunManager::GetRunManager()->GetUserDetectorConstruction());
-       G4LogicalVolume *fLogicalLAr = detectorConstruction->GetScoringVolume();
-
-      //  G4cout << " fLogical: " << fLogicalLAr << " , volume: " << volume << G4endl; 
-      
-       // only give output in the active volume
-       if(volume != fLogicalLAr){
-        return;}
+       const auto *detectorConstruction = static_cast<const B02DetectorConstruction*>(
+           G4RunManager::GetRunManager()->GetUserDetectorConstruction());
+      //  G4cout << " fLogical: " << fLogicalLAr << " , volume: " << volume << G4endl;
+       if (!detectorConstruction || !detectorConstruction->IsSensitiveVolume(volume)) {
+         return;
+       }
        
       //  G4cout << " YA LOGRÉ DETECTAR LA CCD: " << stepLength/mm << G4endl; 
 
@@ -87,4 +85,3 @@ void B02SteppingAction::UserSteppingAction(const G4Step* aStep)
   
 
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
-

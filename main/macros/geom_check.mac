@@ -1,0 +1,7 @@
+/control/verbose 1
+/run/verbose 1
+/run/initialize
+/geometry/test/run
+/tracking/verbose 0
+/run/beamOn 1
+

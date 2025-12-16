@@ -4,7 +4,6 @@
 #ifndef B02SteppingAction_h
 #define B02SteppingAction_h 1
 
-#include "B02DetectorConstruction.hh"
 #include "B02EventAction.hh"
 
 #include "G4UserSteppingAction.hh"
@@ -15,7 +14,7 @@
 
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
 
-//class B02EventAction;
+class B02DetectorConstruction;
 
 class B02SteppingAction : public G4UserSteppingAction
 {
