@@ -8,12 +8,14 @@
 #include <TString.h>
 #include <TColor.h>
 #include <TApplication.h>
+#include <TSystem.h>
 
 #include <iostream>
 #include <vector>
 #include <string>
 #include <utility>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -45,7 +47,7 @@ std::string ResolveFilename(const char* explicitArg) {
   }
 
   if (candidate.empty()) {
-    candidate = "OUTPUT.root";
+    candidate = "B02ntuples.root";
   }
 
   return candidate;
@@ -81,11 +83,13 @@ std::pair<double, double> ComputeRange(TTree* tree,
 }
 }  // namespace
 
-void RunValidateMuonGen(const std::string& filename) {
+void RunValidateMuonGen(const std::string& filename, bool makeImpact) {
   if (filename.empty()) {
     std::cerr << "[ValidateMuonGen] Error: empty file name resolved.\n";
     return;
   }
+
+  gROOT->SetBatch(true);
 
   std::cout << "[ValidateMuonGen] Opening file: " << filename << std::endl;
   TFile* file = TFile::Open(filename.c_str(), "READ");
@@ -141,51 +145,72 @@ void RunValidateMuonGen(const std::string& filename) {
   TCanvas canvas("cValidate", "Muon generator validation", 900, 700);
   canvas.SetGrid();
 
-  // 1. cos(thetaPri)
+  // 1. Downward zenith cosine: -cos(thetaPri)
   canvas.Clear();
   TH1D hCostheta("hCostheta",
-                 "Muon angular distribution;cos(#theta_{pri});Events",
+                 "Muon angular distribution;cos_{zenith}^{#downarrow};Events",
                  60, 0.0, 1.0);
-  tree->Draw("cos(thetaPri)>>hCostheta", "", "goff");
+  double thetaPri = 0.0;
+  tree->SetBranchAddress("thetaPri", &thetaPri);
+  Long64_t clampLow = 0;
+  Long64_t clampHigh = 0;
+  for (Long64_t entry = 0; entry < nEntries; ++entry) {
+    tree->GetEntry(entry);
+    double c = -std::cos(thetaPri);
+    if (!std::isfinite(c)) {
+      ++clampLow;
+      c = 0.0;
+    } else if (c < 0.0) {
+      ++clampLow;
+      c = 0.0;
+    } else if (c > 1.0) {
+      ++clampHigh;
+      c = 1.0;
+    }
+    hCostheta.Fill(c);
+  }
   hCostheta.SetLineColor(kAzure + 2);
   hCostheta.SetLineWidth(2);
   canvas.cd();
   hCostheta.Draw("hist");
   canvas.SaveAs("validate_costheta.pdf");
+  std::cout << "[ValidateMuonGen] costheta clamp: low=" << clampLow
+            << " high=" << clampHigh << " total=" << nEntries << "\n";
 
   // 2. EevtPri (energy)
   const double eMinRaw = (nEntries > 0) ? tree->GetMinimum("EevtPri") : 0.0;
   const double eMaxRaw = (nEntries > 0) ? tree->GetMaximum("EevtPri") : 0.0;
-  bool assumeMeV = std::isfinite(eMaxRaw) ? (eMaxRaw > 200.0) : false;
-  const double energyScale = assumeMeV ? 1.0 / 1000.0 : 1.0;
-  double eMin = std::isfinite(eMinRaw) ? eMinRaw * energyScale : 0.0;
-  double eMax = std::isfinite(eMaxRaw) ? eMaxRaw * energyScale : 20.0;
-  if (eMin < 0.0) {
-    eMin = 0.0;
-  }
-  if (eMax <= eMin) {
-    eMax = eMin + 1.0;
-  }
+
+  // The tree stores EevtPri in GeV; pad the observed range slightly.
+  double eMin = std::isfinite(eMinRaw) ? eMinRaw : 0.0;
+  double eMax = std::isfinite(eMaxRaw) ? eMaxRaw : 0.0;
+  if (eMin < 0.0) eMin = 0.0;
+  if (eMax <= eMin) eMax = eMin + 1.0;
   const double eSpan = eMax - eMin;
-  double eLow = std::max(0.0, eMin - 0.1 * eSpan);
-  double eHigh = eMax + 0.1 * eSpan;
-  if (eHigh <= eLow) {
-    eLow = 0.0;
-    eHigh = std::max(20.0, eHigh + 1.0);
-  }
-  const char* energyAxisLabel = "E_{#mu} [GeV]";
-  TString energyExpr = assumeMeV ? "EevtPri/1000.0" : "EevtPri";
+  const double eLow = std::max(0.0, eMin - 0.1 * eSpan);
+  const double eHigh = eMax + 0.1 * eSpan;
 
   canvas.Clear();
   TH1D hEnergy("hEnergy",
-               Form("Primary muon energy;%s;Events", energyAxisLabel),
+               "Primary muon energy;E_{#mu} [GeV];Events",
                80, eLow, eHigh);
-  tree->Draw(energyExpr + ">>hEnergy", "", "goff");
+  double ePri = 0.0;
+  tree->SetBranchAddress("EevtPri", &ePri);
+  for (Long64_t entry = 0; entry < nEntries; ++entry) {
+    tree->GetEntry(entry);
+    if (!std::isfinite(ePri)) {
+      continue;
+    }
+    hEnergy.Fill(ePri);
+  }
   hEnergy.SetLineColor(kOrange + 7);
   hEnergy.SetLineWidth(2);
   canvas.cd();
   hEnergy.Draw("hist");
   canvas.SaveAs("validate_energy.pdf");
+  std::cout << "[ValidateMuonGen] energy underflow=" << hEnergy.GetBinContent(0)
+            << " overflow=" << hEnergy.GetBinContent(hEnergy.GetNbinsX() + 1)
+            << " entries=" << hEnergy.GetEntries() << "\n";
 
   // 3. muonX0 vs muonY0
   auto [xLow, xHigh] = ComputeRange(tree, "muonX0", nEntries, 5.0);
@@ -201,29 +226,75 @@ void RunValidateMuonGen(const std::string& filename) {
   canvas.SaveAs("validate_xy0.pdf");
   canvas.SetRightMargin(0.08);
 
+  // Optional: impact-plane sampling (muonXImp, muonYImp).
+  if (makeImpact) {
+    const bool haveImpact = tree->GetBranch("muonXImp") && tree->GetBranch("muonYImp");
+    if (!haveImpact) {
+      std::cout << "[ValidateMuonGen] validate_xyImpact.pdf requested but impact branches "
+                   "(muonXImp/muonYImp) are missing; skipping.\n";
+    } else {
+      auto [xImpLow, xImpHigh] = ComputeRange(tree, "muonXImp", nEntries, 1.0);
+      auto [yImpLow, yImpHigh] = ComputeRange(tree, "muonYImp", nEntries, 1.0);
+      canvas.Clear();
+      canvas.SetRightMargin(0.15);
+      TH2D hXYImp("hXYImp", "Muon impact-plane sampling;x_{imp} [cm];y_{imp} [cm]",
+                  100, xImpLow, xImpHigh,
+                  100, yImpLow, yImpHigh);
+      tree->Draw("muonYImp:muonXImp>>hXYImp", "", "goff");
+      canvas.cd();
+      hXYImp.Draw("COLZ");
+      canvas.SaveAs("validate_xyImpact.pdf");
+      canvas.SetRightMargin(0.08);
+    }
+  }
+
   // 4. muonZ0
-  auto [zLow, zHigh] = ComputeRange(tree, "muonZ0", nEntries, 10.0);
+  const double zMinRaw = (nEntries > 0) ? tree->GetMinimum("muonZ0") : 0.0;
+  const double zMaxRaw = (nEntries > 0) ? tree->GetMaximum("muonZ0") : 0.0;
+  const bool zIsConstant = (nEntries > 0) && std::isfinite(zMinRaw) &&
+                           std::isfinite(zMaxRaw) &&
+                           std::abs(zMaxRaw - zMinRaw) < 1e-9;
+  auto [zLow, zHigh] = ComputeRange(tree, "muonZ0", nEntries, 0.5);
   canvas.Clear();
-  TH1D hZ("hZ", "Muon source height;z0 [cm];Events",
-          80, zLow, zHigh);
-  tree->Draw("muonZ0>>hZ", "", "goff");
+  TString zTitle = zIsConstant
+                     ? Form("Muon source height (constant z0 = %.3g cm);z0 [cm];Events",
+                            zMinRaw)
+                     : "Muon source height;z0 [cm];Events";
+  TH1D hZ("hZ", zTitle, 80, zLow, zHigh);
+  double z0 = 0.0;
+  tree->SetBranchAddress("muonZ0", &z0);
+  for (Long64_t entry = 0; entry < nEntries; ++entry) {
+    tree->GetEntry(entry);
+    if (!std::isfinite(z0)) {
+      continue;
+    }
+    hZ.Fill(z0);
+  }
   hZ.SetLineColor(kGreen + 2);
   hZ.SetLineWidth(2);
   canvas.cd();
   hZ.Draw("hist");
   canvas.SaveAs("validate_z0.pdf");
+  std::cout << "[ValidateMuonGen] z0 underflow=" << hZ.GetBinContent(0)
+            << " overflow=" << hZ.GetBinContent(hZ.GetNbinsX() + 1)
+            << " entries=" << hZ.GetEntries() << "\n";
 
   file->Close();
   delete file;
   std::cout << "[ValidateMuonGen] Validation plots saved: "
                "validate_costheta.pdf, validate_energy.pdf, "
-               "validate_xy0.pdf, validate_z0.pdf\n";
+               "validate_xy0.pdf, validate_z0.pdf";
+  if (makeImpact) {
+    std::cout << ", validate_xyImpact.pdf";
+  }
+  std::cout << "\n";
 }
 
-void ValidateMuonGen(const char* filename) {
-  RunValidateMuonGen(ResolveFilename(filename));
-}
-
-void ValidateMuonGen() {
-  RunValidateMuonGen(ResolveFilename(nullptr));
+void ValidateMuonGen(const char* filename = "", bool makeImpact = false) {
+  const bool envImpact = []() {
+    const char* env = gSystem ? gSystem->Getenv("SIMCCD_VALIDATE_IMPACT") : nullptr;
+    if (!env || std::strlen(env) == 0) return false;
+    return std::atoi(env) != 0;
+  }();
+  RunValidateMuonGen(ResolveFilename(filename), makeImpact || envImpact);
 }

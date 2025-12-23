@@ -59,12 +59,16 @@ void B02SteppingAction::UserSteppingAction(const G4Step* aStep)
       //  G4cout << " YA LOGRÉ DETECTAR LA CCD: " << stepLength/mm << G4endl; 
 
 
-       if(track->GetParentID() == 0){
+       const bool isPrimary = (track->GetParentID() == 0);
+       if(isPrimary){
    // Get the length traced by the primary muons
         //  G4cout << " StepLength : " << stepLength << G4endl; 
          fEventAction->AddLength(stepLength);
        }
-       
+
+       const G4ThreeVector prePos = aStep->GetPreStepPoint()->GetPosition();
+       const G4ThreeVector postPos = aStep->GetPostStepPoint()->GetPosition();
+       fEventAction->AddCCDStep(edep/GeV, prePos, postPos, isPrimary);
        
     // step length associated with the primary muon 
     // if (trackID == 1){

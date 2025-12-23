@@ -6,6 +6,7 @@
 
 #include "G4UserEventAction.hh"
 #include "globals.hh"
+#include "G4ThreeVector.hh"
 
 // New modification based in B5 example 
 
@@ -23,6 +24,7 @@ public:
     	
     void AddLength(double dl){fLength += dl;};
     void AddEdep(double de){fEnergy += de;};
+    void AddCCDStep(double edepGeV, const G4ThreeVector& prePos, const G4ThreeVector& postPos, G4bool isPrimary);
     //G4double GetTracedLength() const;
     
 private:
@@ -32,6 +34,17 @@ private:
     double fpx, fpy, fpz, fp, fth, fph;
     double fLength;
     double fEnergy;
+
+    // CCD summary (event-level) for offline pixelization
+    double fEdepCCDGeV;
+    int    fNstepsCCD;
+    G4ThreeVector fEntryCCD;
+    G4ThreeVector fExitCCD;
+    double fTrackLenCCD;
+    bool   fHasEntryCCD;
+    double fDirX;
+    double fDirY;
+    double fDirZ;
 };
 
 //inline void B02EventAction::AddLength(G4double dl) {

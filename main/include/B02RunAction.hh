@@ -9,6 +9,7 @@
 #include "B02BarSD.hh"
 
 class G4Run;
+class G4GenericMessenger;
 
 
 class B02EventAction;
@@ -21,7 +22,7 @@ class B02RunAction : public G4UserRunAction
 {
   public:
     B02RunAction(B02EventAction* b02eventAction);
-   ~B02RunAction() override = default;
+   ~B02RunAction() override;
 
   public:
     void BeginOfRunAction(const G4Run*) override;
@@ -29,6 +30,11 @@ class B02RunAction : public G4UserRunAction
   // modification 2024
   private:
     B02EventAction* fB02EventAction = nullptr;
+    G4GenericMessenger* fMessenger = nullptr;
+    G4bool fUseTimeSeed = true;
+    G4bool fUseFixedSeeds = false;
+    G4long fSeed1 = 12345;
+    G4long fSeed2 = 67890;
     
 };
 

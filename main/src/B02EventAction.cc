@@ -19,6 +19,7 @@
 #include "G4SystemOfUnits.hh"
 // incorporate headers from B02AnalysisManager 
 #include "B02BarHit.hh"
+#include "B02PrimaryGeneratorAction.hh"
 
 
 B02EventAction::B02EventAction()
@@ -32,7 +33,16 @@ B02EventAction::B02EventAction()
     fth(0.0),
     fph(0.0),
     fLength(0.0),
-    fEnergy(0.0)
+    fEnergy(0.0),
+    fEdepCCDGeV(0.0),
+    fNstepsCCD(0),
+    fEntryCCD(),
+    fExitCCD(),
+    fTrackLenCCD(0.0),
+    fHasEntryCCD(false),
+    fDirX(0.0),
+    fDirY(0.0),
+    fDirZ(-1.0)
 {
   // set printing per each event
   G4RunManager::GetRunManager()->SetPrintProgress(1);
@@ -45,6 +55,15 @@ void B02EventAction::BeginOfEventAction(const G4Event* aEvent)
 
   fLength = 0.0; // mm
   fEnergy = 0.0;
+  fEdepCCDGeV = 0.0;
+  fNstepsCCD = 0;
+  fEntryCCD = G4ThreeVector();
+  fExitCCD = G4ThreeVector();
+  fTrackLenCCD = 0.0;
+  fHasEntryCCD = false;
+  fDirX = 0.0;
+  fDirY = 0.0;
+  fDirZ = -1.0;
   
   if(fBarCollID==-1) {
   
@@ -86,13 +105,20 @@ void B02EventAction::BeginOfEventAction(const G4Event* aEvent)
     fph = 0.0;
   }
 
-  analysisManager->FillH1(0,fEpri/MeV);
+  analysisManager->FillH1(0,fEpri/GeV);
   analysisManager->FillH1(1,std::cos(fth));
 }
 
 void B02EventAction::EndOfEventAction(const G4Event* aEvent)
 
 {
+  if (fHasEntryCCD) {
+    fTrackLenCCD = (fExitCCD - fEntryCCD).mag();
+  } else {
+    fEntryCCD = G4ThreeVector(0.,0.,0.);
+    fExitCCD = G4ThreeVector(0.,0.,0.);
+    fTrackLenCCD = 0.0;
+  }
 
   // Get analysis manager
   auto analysisManager = G4AnalysisManager::Instance();
@@ -101,9 +127,13 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
   G4double muonX0 = 0.0;
   G4double muonY0 = 0.0;
   G4double muonZ0 = 0.0;
+  G4double muonXImp = 0.0;
+  G4double muonYImp = 0.0;
+  G4double muonZImp = 0.0;
   G4double thetaPri = 0.0;
   G4double phiPri = 0.0;
   G4double primaryEnergy = 0.0;
+  G4ThreeVector primaryDir(0.,0.,-1.);
 
   if (const auto primaryVertex = aEvent->GetPrimaryVertex(0)) {
     muonX0 = primaryVertex->GetX0();
@@ -116,6 +146,7 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
       if (momentum.mag2() > 0.) {
         thetaPri = momentum.theta();
         phiPri = momentum.phi();
+        primaryDir = momentum.unit();
       }
     }
   }
@@ -123,6 +154,16 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
   fEpri = primaryEnergy;
   fth = thetaPri;
   fph = phiPri;
+  fDirX = primaryDir.x();
+  fDirY = primaryDir.y();
+  fDirZ = primaryDir.z();
+
+  if (const auto* gen = dynamic_cast<const B02PrimaryGeneratorAction*>(
+          G4RunManager::GetRunManager()->GetUserPrimaryGeneratorAction())) {
+    muonXImp = gen->GetMuonXImpact();
+    muonYImp = gen->GetMuonYImpact();
+    muonZImp = gen->GetMuonZImpact();
+  }
  
  // accumulated length by muons.
  
@@ -227,6 +268,21 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
       analysisManager->FillNtupleDColumn(1,11,muonX0/cm);
       analysisManager->FillNtupleDColumn(1,12,muonY0/cm);
       analysisManager->FillNtupleDColumn(1,13,muonZ0/cm);
+      analysisManager->FillNtupleDColumn(1,14,muonXImp/cm);
+      analysisManager->FillNtupleDColumn(1,15,muonYImp/cm);
+      analysisManager->FillNtupleDColumn(1,16,muonZImp/cm);
+      analysisManager->FillNtupleDColumn(1,17,fEdepCCDGeV);
+      analysisManager->FillNtupleIColumn(1,18,fNstepsCCD);
+      analysisManager->FillNtupleDColumn(1,19,fEntryCCD.x()/cm);
+      analysisManager->FillNtupleDColumn(1,20,fEntryCCD.y()/cm);
+      analysisManager->FillNtupleDColumn(1,21,fEntryCCD.z()/cm);
+      analysisManager->FillNtupleDColumn(1,22,fExitCCD.x()/cm);
+      analysisManager->FillNtupleDColumn(1,23,fExitCCD.y()/cm);
+      analysisManager->FillNtupleDColumn(1,24,fExitCCD.z()/cm);
+      analysisManager->FillNtupleDColumn(1,25,fTrackLenCCD/cm);
+      analysisManager->FillNtupleDColumn(1,26,fDirX);
+      analysisManager->FillNtupleDColumn(1,27,fDirY);
+      analysisManager->FillNtupleDColumn(1,28,fDirZ);
       analysisManager->AddNtupleRow(1);
 
 // analysisManager->FillNtupleDColumn(1,9,fLength/cm);
@@ -237,3 +293,19 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
 
 
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
+void B02EventAction::AddCCDStep(double edepGeV,
+                                const G4ThreeVector& prePos,
+                                const G4ThreeVector& postPos,
+                                G4bool isPrimary)
+{
+  fEdepCCDGeV += edepGeV;
+  fNstepsCCD++;
+
+  if (isPrimary) {
+    if (!fHasEntryCCD) {
+      fEntryCCD = prePos;
+      fHasEntryCCD = true;
+    }
+    fExitCCD = postPos;
+  }
+}
