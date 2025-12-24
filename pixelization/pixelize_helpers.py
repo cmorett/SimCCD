@@ -2,7 +2,7 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, Tuple, Union
 
 import numpy as np
 
@@ -15,7 +15,11 @@ EV_PER_ELECTRON = 3.7
 class CCDParams:
     pixel_size_microns: float = DEFAULT_PIXEL_SIZE_MICRONS
     thickness_microns: float = DEFAULT_CCD_THICKNESS_MICRONS
-    diffusion_alpha: float = 12.0  # rough scale in micron^2
+    # Active silicon area (default: 0.9 cm x 0.6 cm from CONNIE-like CCD)
+    width_microns: float = 9000.0
+    height_microns: float = 6000.0
+    # Diffusion tuned to give sigma ~6-8 px at full depth for clear but moderate thickening
+    diffusion_alpha: float = 1400.0  # micron^2 scale in sqrt(|alpha * ln(1 - beta z)|)
     diffusion_beta: float = 1.0 / (DEFAULT_CCD_THICKNESS_MICRONS + 1.0)
 
 
@@ -27,7 +31,7 @@ def ensure_dir(path: Path) -> Path:
 def diffusion_sigma(z_microns: float, params: CCDParams) -> float:
     z = max(0.0, min(z_microns, params.thickness_microns))
     # simple monotonic diffusion curve similar to funciones_Sim_ab_initio.diffution_curve
-    inside = max(1e-8, 1.0 - params.diffusion_beta * z)
+    inside = max(1e-6, 1.0 - params.diffusion_beta * z)
     return math.sqrt(abs(params.diffusion_alpha * math.log(inside)))
 
 
@@ -43,8 +47,9 @@ def build_track_image(
     phi: float,
     entry_cm: Tuple[float, float, float],
     params: CCDParams,
-    image_size: int = 64,
-    center_origin: bool = True,
+    image_size: Union[int, Tuple[int, int], None] = None,
+    center_origin: bool = False,
+    margin_pix: int = 20,
 ) -> np.ndarray:
     """
     Render a simple 2D pixelized image of a muon track.
@@ -54,46 +59,90 @@ def build_track_image(
     - theta/phi: primary direction (rad)
     - entry_cm: entry position in cm (x,y,z)
     """
-    img = np.zeros((image_size, image_size), dtype=np.float32)
+    pix = params.pixel_size_microns
+    electrons = geant_to_electrons(edep_GeV)
+
+    # Map real CCD coordinates (cm) into a downsampled canvas that spans the
+    # whole active area. We keep the physical pixel size for diffusion and only
+    # downscale when placing into the output image.
+    width_pix = params.width_microns / pix
+    height_pix = params.height_microns / pix
+    if image_size is None:
+        img_w = int(round(width_pix)) + 2 * margin_pix
+        img_h = int(round(height_pix)) + 2 * margin_pix
+    elif isinstance(image_size, Iterable):
+        img_w, img_h = (int(image_size[0]), int(image_size[1]))
+    else:
+        img_w = img_h = int(image_size)
+
+    img = np.zeros((img_h, img_w), dtype=np.float32)
     if track_len_cm <= 0.0 or edep_GeV <= 0.0:
         return img
 
-    pix = params.pixel_size_microns
-    thickness_cm = params.thickness_microns * 1e-4  # micron -> cm
-    electrons = geant_to_electrons(edep_GeV)
+    scale_x = width_pix / img_w
+    scale_y = height_pix / img_h
 
-    # Projected XY displacement (cm) using chord through CCD thickness if available.
-    dz = thickness_cm
-    dx = track_len_cm * math.sin(theta) * math.cos(phi)
-    dy = track_len_cm * math.sin(theta) * math.sin(phi)
-    # start at center
-    cx = cy = (image_size - 1) / 2.0 if center_origin else 0.0
-    start = np.array([cx - dx / (2 * pix * 1e-4), cy - dy / (2 * pix * 1e-4)])
-    end = np.array([cx + dx / (2 * pix * 1e-4), cy + dy / (2 * pix * 1e-4)])
+    # Entry point in canvas coordinates (0,0 lower-left)
+    entry_native = np.array(
+        [
+            entry_cm[0] * 1.0e4 / pix + width_pix / 2.0 + margin_pix,
+            entry_cm[1] * 1.0e4 / pix + height_pix / 2.0 + margin_pix,
+        ]
+    )
+    entry_canvas = entry_native / np.array([scale_x, scale_y])
+    if center_origin:
+        # Keep legacy behavior of recentering to avoid clipping when using small crops.
+        cx = (img_w - 1) / 2.0
+        cy = (img_h - 1) / 2.0
+        entry_canvas = entry_canvas - np.array([img_w / 2.0, img_h / 2.0]) + np.array([cx, cy])
 
-    # Line parameterization
-    num_samples = max(2, int(np.hypot(*(end - start)) * 2))
+    # Displacement from entry to exit in native pixels, then downscaled.
+    dx_native = track_len_cm * math.sin(theta) * math.cos(phi) * 1.0e4 / pix
+    dy_native = track_len_cm * math.sin(theta) * math.sin(phi) * 1.0e4 / pix
+    disp_canvas = np.array([dx_native / scale_x, dy_native / scale_y])
+    start = entry_canvas
+    end = entry_canvas + disp_canvas
+
+    track_len_microns = track_len_cm * 1.0e4
+    num_samples = max(5, int(math.ceil(track_len_microns / (0.5 * pix))))
     xs = np.linspace(start[0], end[0], num_samples)
     ys = np.linspace(start[1], end[1], num_samples)
 
     charge_per_sample = electrons / num_samples
-    # smear transversely with a Gaussian whose sigma grows with depth
+    # Depth mapping based on the actual z-span of the track (clamped to the CCD).
+    z0 = entry_cm[2] * 1.0e4  # cm -> microns
+    z_path = track_len_cm * 1.0e4 * math.cos(theta)
+    z1 = z0 + z_path
+    z0_c = max(0.0, min(params.thickness_microns, z0))
+    z1_c = max(0.0, min(params.thickness_microns, z1))
+    z_span = z1_c - z0_c
+
     for i, (x, y) in enumerate(zip(xs, ys)):
-        depth_microns = (i / max(1, num_samples - 1)) * params.thickness_microns
-        sigma_pix = diffusion_sigma(depth_microns, params) / pix
-        sigma_pix = max(0.5, min(5.0, sigma_pix))
-        # influence region ~3 sigma
-        xmin = int(max(0, math.floor(x - 3 * sigma_pix)))
-        xmax = int(min(image_size - 1, math.ceil(x + 3 * sigma_pix)))
-        ymin = int(max(0, math.floor(y - 3 * sigma_pix)))
-        ymax = int(min(image_size - 1, math.ceil(y + 3 * sigma_pix)))
+        t = i / max(1, num_samples - 1)
+        if abs(z_span) > 1e-6:
+            depth_microns = z0_c + t * z_span
+        else:
+            depth_microns = t * params.thickness_microns
+        depth_sigma = diffusion_sigma(depth_microns, params) / pix
+        # Add mild path-length broadening so thickness grows along the chord even at shallow angles.
+        path_pix = track_len_microns / pix
+        sigma_native = math.sqrt(max(0.0, depth_sigma ** 2 + (0.05 * t * path_pix) ** 2))
+        sigma_native = min(max(0.25, sigma_native), 6.0)
+        sigma_x = sigma_native / scale_x
+        sigma_y = sigma_native / scale_y
+        radius_x = 2.5 * sigma_x
+        radius_y = 2.5 * sigma_y
+        xmin = int(max(0, math.floor(x - radius_x)))
+        xmax = int(min(img_w - 1, math.ceil(x + radius_x)))
+        ymin = int(max(0, math.floor(y - radius_y)))
+        ymax = int(min(img_h - 1, math.ceil(y + radius_y)))
         if xmin > xmax or ymin > ymax:
             continue
         xs_grid = np.arange(xmin, xmax + 1)
         ys_grid = np.arange(ymin, ymax + 1)
         xv, yv = np.meshgrid(xs_grid, ys_grid, indexing="xy")
-        dist2 = (xv - x) ** 2 + (yv - y) ** 2
-        weights = np.exp(-0.5 * dist2 / (sigma_pix ** 2))
+        dist2 = ((xv - x) / sigma_x) ** 2 + ((yv - y) / sigma_y) ** 2
+        weights = np.exp(-0.5 * dist2)
         weights_sum = weights.sum()
         if weights_sum <= 0:
             continue
