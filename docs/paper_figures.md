@@ -11,39 +11,35 @@
 python analysis/make_paper_outputs.py \
   --input build/vs2022/main/Release/B02ntuples.root \
   --output paper_outputs --tag demo \
-  --examples 200 --dist-events 50000
+  --examples 24 --dist-events 50000 \
+  --pixel-size-microns 15 --thickness-microns 725 \
+  --canvas-mode adaptive --margin-pix 24 \
+  --quality-only
 ```
+
+Key CLI knobs: `--canvas-mode adaptive|fixed`, `--canvas-size` (when fixed), `--quality-only` (plots use non-truncated events), `--pixel-size-microns`, `--thickness-microns`, `--ev-per-electron`, `--margin-pix`, `--seed`, `--examples`, `--dist-events`.
 
 Outputs (under `paper_outputs/<tag>/`):
 
 - Figures:
-  - `fig_energy_spectrum.pdf`
-  - `fig_coszenith_down.pdf`
-  - `fig_xyImpact.pdf`
-  - `fig_z0.pdf`
-  - `fig_edep_ccd.pdf`
-  - `fig_trackLen_ccd.pdf`
-  - `fig_edep_vs_trackLen.pdf`
-  - `fig_costheta_vs_trackLen.pdf`
-  - `fig_pixelized_examples.pdf` (plus per-event PNGs in `images/`)
-  - Pixel metrics distributions: `fig_cluster_size.pdf`, `fig_cluster_charge.pdf`, `fig_sigma_x.pdf`, `fig_sigma_y.pdf`, `fig_length_pix.pdf`
+  - Source/geometry: `fig_energy_spectrum.pdf`, `fig_coszenith_down.pdf`, `fig_xyImpact.pdf`, `fig_z0.pdf`, `fig_edep_ccd.pdf`, `fig_trackLen_ccd.pdf`, `fig_edep_vs_trackLen.pdf`, `fig_costheta_vs_trackLen.pdf`, `fig_dEdx.pdf`
+  - dE/dx tail (log): `fig_dEdx_tail.pdf`
+  - Pixel examples: `fig_pixelized_examples.pdf` + per-event PNGs in `images/` (quality events with scale bars and annotations)
+  - Pixel metrics (quality overlaid on "all" unless `--quality-only`): `fig_cluster_size.pdf`, `fig_cluster_charge.pdf`, `fig_sigma_trans.pdf`, `fig_sigma_long.pdf`, `fig_elongation.pdf`, `fig_sigma_x_axis.pdf`, `fig_sigma_y_axis.pdf`
+  - Length diagnostics: `fig_length_pix_geom.pdf`, `fig_length_pix_img.pdf`, `fig_length_pix.pdf` (geom vs PCA extent)
 - Tables:
-  - `tables/validation_summary.csv` (energy, clamp counts, CCD stats, impact uniformity)
-  - `tables/pixel_metrics.csv` (if pixelization samples exist)
+  - `tables/validation_summary.csv` (energy, clamp counts, CCD stats, dE/dx, impact uniformity, truncation fraction, sigma/length stats)
+  - `tables/pixel_metrics_all.csv` and `tables/pixel_metrics_quality.csv` (pixel-level metrics with truncation flag)
   - `tables/units_and_conventions.txt`
 - Config: `run_config.json`
 
-Key assumptions (also written to `units_and_conventions.txt` and `run_config.json`):
+Quality cuts applied to pixel metrics: `EdepCCD>0`, `trackLenCCD>0`, and `is_truncated=False` (charge touching image edge). PCA-based sigmas/lengths are the physics-facing metrics; axis-aligned sigmas are kept as diagnostics only.
 
-- `EevtPri` in GeV; `thetaPri`/`phiPri` are Geant4 angles; downward cos(zenith) = `-cos(thetaPri)`.
-- Impact-plane coordinates `muonXImp/muonYImp/muonZImp` in cm.
-- CCD summaries:
-  - `EdepCCD` in GeV (total deposited energy in sensitive silicon).
-  - `trackLenCCD` chord length between first/last CCD step (cm).
-  - `dirX/Y/Z` primary direction unit vector.
-- Pixelization model defaults:
-  - Pixel size 15 µm, CCD thickness 725 µm.
-  - 3.7 eV per electron; Gaussian transverse diffusion with a simple depth-dependent sigma.
+Quick regression sanity (optional):
+
+```
+python analysis/regression_check.py --summary paper_outputs/<tag>/tables/validation_summary.csv
+```
 
 ## One-command end-to-end (optional)
 
