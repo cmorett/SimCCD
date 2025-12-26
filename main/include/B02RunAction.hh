@@ -70,6 +70,7 @@ class B02RunAction : public G4UserRunAction
     std::string fMacroHash;
     std::string fProvenanceTag;
     std::string fPhysicsListName;
+    G4int fRunInfoNtupleId = -1;
 
     // Geometry/physics knobs captured for run metadata
     double fCCDGammaCut = 0.0;

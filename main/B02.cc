@@ -19,6 +19,7 @@
 #include "G4UIExecutive.hh"
 #include "G4VisExecutive.hh"
 #include "G4SteppingVerbose.hh"
+#include "G4Version.hh"
 
 #include <algorithm>
 #include <cctype>
@@ -169,7 +170,11 @@ int main(int argc, char** argv)
   // Visualization
   G4VisManager* visManager = nullptr;
   if (!options.noVis) {
+#if defined(G4VERSION_NUMBER) && (G4VERSION_NUMBER >= 1110)
+    visManager = new G4VisExecutive();
+#else
     visManager = new G4VisExecutive(argc, argv);
+#endif
     visManager->Initialize();
   }
 

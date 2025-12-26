@@ -79,6 +79,8 @@ void B02RunAction::SetProvenanceTag(const G4String& tag) { fProvenanceTag = tag;
 void B02RunAction::BuildAnalysis() {
   auto analysisManager = G4AnalysisManager::Instance();
 
+  fRunInfoNtupleId = -1;
+
   analysisManager->SetDefaultFileType("root");
   analysisManager->SetVerboseLevel(1);
   analysisManager->SetNtupleMerging(G4Threading::IsMultithreadedApplication());
@@ -172,7 +174,8 @@ void B02RunAction::BuildAnalysis() {
     analysisManager->FinishNtuple();
 
     // Ntuple 2: run-level provenance
-    analysisManager->CreateNtuple("B02RunInfo", "Run-level provenance and configuration");
+    fRunInfoNtupleId =
+        analysisManager->CreateNtuple("B02RunInfo", "Run-level provenance and configuration");
     analysisManager->CreateNtupleSColumn("gitHash");               // 0
     analysisManager->CreateNtupleIColumn("gitDirty");              // 1
     analysisManager->CreateNtupleSColumn("macroPath");             // 2
@@ -205,7 +208,9 @@ void B02RunAction::BuildAnalysis() {
 
     analysisManager->SetNtupleFileName(0, "B02ntuples");
     analysisManager->SetNtupleFileName(1, "B02ntuples");
-    analysisManager->SetNtupleFileName(2, "B02ntuples");
+    if (fRunInfoNtupleId >= 0) {
+      analysisManager->SetNtupleFileName(fRunInfoNtupleId, "B02ntuples");
+    }
   }
 }
 
@@ -330,9 +335,10 @@ std::string B02RunAction::ComputeFileHash(const std::string& path) const {
 
 void B02RunAction::FillRunInfoNtuple(const G4Run* run) {
   auto analysisManager = G4AnalysisManager::Instance();
-  if (!analysisManager || analysisManager->GetNtuple(2) == nullptr) {
+  if (!analysisManager || fRunInfoNtupleId < 0) {
     return;
   }
+  const auto ntupleId = fRunInfoNtupleId;
 
   DetectGitHash();
   DetectGitDirty();
@@ -378,35 +384,35 @@ void B02RunAction::FillRunInfoNtuple(const G4Run* run) {
     fOverburdenMaterial = detector->GetOverburdenMaterialName();
   }
 
-  analysisManager->FillNtupleSColumn(2, 0, fGitHash);
-  analysisManager->FillNtupleIColumn(2, 1, fGitDirty ? 1 : 0);
-  analysisManager->FillNtupleSColumn(2, 2, fMacroPath);
-  analysisManager->FillNtupleSColumn(2, 3, fMacroHash);
-  analysisManager->FillNtupleSColumn(2, 4, fProvenanceTag);
-  analysisManager->FillNtupleSColumn(2, 5, fPhysicsListName);
-  analysisManager->FillNtupleIColumn(2, 6, fUseTimeSeed ? 1 : 0);
-  analysisManager->FillNtupleIColumn(2, 7, static_cast<G4int>(fSeed1));
-  analysisManager->FillNtupleIColumn(2, 8, static_cast<G4int>(fSeed2));
-  analysisManager->FillNtupleSColumn(2, 9, muonMode);
-  analysisManager->FillNtupleSColumn(2,10, fluxModel);
-  analysisManager->FillNtupleSColumn(2,11, muonChargeMode);
-  analysisManager->FillNtupleDColumn(2,12, muonChargeRatio);
-  analysisManager->FillNtupleDColumn(2,13, cfgSourceZ);
-  analysisManager->FillNtupleDColumn(2,14, cfgSourceLx);
-  analysisManager->FillNtupleDColumn(2,15, cfgSourceLy);
-  analysisManager->FillNtupleDColumn(2,16, cfgThetaMax);
-  analysisManager->FillNtupleDColumn(2,17, cfgEmin);
-  analysisManager->FillNtupleDColumn(2,18, cfgEmax);
-  analysisManager->FillNtupleIColumn(2,19, fOverburdenEnabled ? 1 : 0);
-  analysisManager->FillNtupleDColumn(2,20, fOverburdenThickness / cm);
-  analysisManager->FillNtupleDColumn(2,21, fOverburdenZTop / cm);
-  analysisManager->FillNtupleSColumn(2,22, fOverburdenMaterial);
-  analysisManager->FillNtupleDColumn(2,23, ccdGammaCut_cm);
-  analysisManager->FillNtupleDColumn(2,24, ccdElectronCut_cm);
-  analysisManager->FillNtupleDColumn(2,25, ccdPositronCut_cm);
-  analysisManager->FillNtupleDColumn(2,26, ccdMaxStep_cm);
-  analysisManager->FillNtupleDColumn(2,27, ccdThickness_cm);
-  analysisManager->AddNtupleRow(2);
+  analysisManager->FillNtupleSColumn(ntupleId, 0, fGitHash);
+  analysisManager->FillNtupleIColumn(ntupleId, 1, fGitDirty ? 1 : 0);
+  analysisManager->FillNtupleSColumn(ntupleId, 2, fMacroPath);
+  analysisManager->FillNtupleSColumn(ntupleId, 3, fMacroHash);
+  analysisManager->FillNtupleSColumn(ntupleId, 4, fProvenanceTag);
+  analysisManager->FillNtupleSColumn(ntupleId, 5, fPhysicsListName);
+  analysisManager->FillNtupleIColumn(ntupleId, 6, fUseTimeSeed ? 1 : 0);
+  analysisManager->FillNtupleIColumn(ntupleId, 7, static_cast<G4int>(fSeed1));
+  analysisManager->FillNtupleIColumn(ntupleId, 8, static_cast<G4int>(fSeed2));
+  analysisManager->FillNtupleSColumn(ntupleId, 9, muonMode);
+  analysisManager->FillNtupleSColumn(ntupleId,10, fluxModel);
+  analysisManager->FillNtupleSColumn(ntupleId,11, muonChargeMode);
+  analysisManager->FillNtupleDColumn(ntupleId,12, muonChargeRatio);
+  analysisManager->FillNtupleDColumn(ntupleId,13, cfgSourceZ);
+  analysisManager->FillNtupleDColumn(ntupleId,14, cfgSourceLx);
+  analysisManager->FillNtupleDColumn(ntupleId,15, cfgSourceLy);
+  analysisManager->FillNtupleDColumn(ntupleId,16, cfgThetaMax);
+  analysisManager->FillNtupleDColumn(ntupleId,17, cfgEmin);
+  analysisManager->FillNtupleDColumn(ntupleId,18, cfgEmax);
+  analysisManager->FillNtupleIColumn(ntupleId,19, fOverburdenEnabled ? 1 : 0);
+  analysisManager->FillNtupleDColumn(ntupleId,20, fOverburdenThickness / cm);
+  analysisManager->FillNtupleDColumn(ntupleId,21, fOverburdenZTop / cm);
+  analysisManager->FillNtupleSColumn(ntupleId,22, fOverburdenMaterial);
+  analysisManager->FillNtupleDColumn(ntupleId,23, ccdGammaCut_cm);
+  analysisManager->FillNtupleDColumn(ntupleId,24, ccdElectronCut_cm);
+  analysisManager->FillNtupleDColumn(ntupleId,25, ccdPositronCut_cm);
+  analysisManager->FillNtupleDColumn(ntupleId,26, ccdMaxStep_cm);
+  analysisManager->FillNtupleDColumn(ntupleId,27, ccdThickness_cm);
+  analysisManager->AddNtupleRow(ntupleId);
 
   G4cout << "[RunInfo] git=" << fGitHash << (fGitDirty ? " (dirty)" : "")
          << ", macro=" << fMacroPath << ", seeds=(" << fSeed1 << "," << fSeed2 << ")"

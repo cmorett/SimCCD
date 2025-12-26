@@ -13,6 +13,20 @@ cmake --build --preset vs2022-release
 
 Outputs: `B02ntuples_10k.root` (plus log on stdout).
 
+## Xook build + smoke test (Linux, Geant4 11.1.1)
+
+```
+module purge
+module load lamod/GEANT4/11.1.1
+module load lamod/cmake/3.31
+cd /storage/icn/carlos.morett/repos/SimCCD
+bash scripts/cluster_smoke_test.sh
+```
+
+Outputs: `B02ntuples.root` and `B02.root` under `outputs/cluster_smoke_YYYYmmdd_HHMMSS/`.
+
+Overrides (optional): `BUILD_DIR`, `RUN_DIR`, `GEOMETRY`, `EVENTS`, `SEED1`, `SEED2`.
+
 ## One-file, cluster-friendly 1M run (Linux)
 
 ```
@@ -37,6 +51,29 @@ Flags:
 - `--chunks N` to split into N jobs; events per chunk is `ceil(events/chunks)`.
 - `--seed1/--seed2` to override deterministic seeds.
 - `--make-paper-outputs` will run `analysis/make_paper_outputs.py` on the merged ROOT file (if produced).
+
+## Xook 1M run (interactive or SLURM)
+
+Interactive (same script as SLURM; `#SBATCH` lines are ignored by bash):
+
+```
+module purge
+module load lamod/GEANT4/11.1.1
+module load lamod/cmake/3.31
+cd /storage/icn/carlos.morett/repos/SimCCD
+RUN_TAG=debug_1M BUILD_DIR=/storage/icn/carlos.morett/build/simccd \
+  OUT_BASE=/storage/icn/carlos.morett/outputs GEOMETRY=primitive \
+  bash slurm/run_tierB_paper_default_1M.sbatch
+```
+
+Batch:
+
+```
+cd /storage/icn/carlos.morett/repos/SimCCD
+sbatch slurm/run_tierB_paper_default_1M.sbatch
+```
+
+Outputs land in `OUT_BASE/RUN_TAG/` and are renamed with the job tag.
 
 ## Windows batch (PowerShell)
 
