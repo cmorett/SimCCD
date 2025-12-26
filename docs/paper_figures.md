@@ -22,11 +22,13 @@ Key CLI knobs: `--canvas-mode adaptive|fixed`, `--canvas-size` (when fixed), `--
 Outputs (under `paper_outputs/<tag>/`):
 
 - Figures:
-  - Source/geometry: `fig_energy_spectrum.pdf`, `fig_coszenith_down.pdf`, `fig_xyImpact.pdf`, `fig_z0.pdf`, `fig_edep_ccd.pdf`, `fig_trackLen_ccd.pdf`, `fig_edep_vs_trackLen.pdf`, `fig_costheta_vs_trackLen.pdf`, `fig_dEdx.pdf`
-  - dE/dx tail (log): `fig_dEdx_tail.pdf`
+  - Source/geometry: `fig_energy_spectrum.pdf`, `fig_coszenith_down.pdf`, `fig_coszen_all_vs_hits.pdf`, `fig_hit_efficiency_vs_coszen.pdf`, `fig_xyImpact.pdf`, `fig_z0.pdf`, `fig_xy0.pdf`
+  - Energy validation: `validate_energy_hits_logy.pdf`, `validate_energy_hits_zoom.pdf`
+  - CCD hits: `fig_edep_ccd.pdf`, `fig_trackLen_ccd.pdf`, `fig_edep_vs_trackLen.pdf`, `fig_edep_vs_len_hits.pdf`, `fig_costheta_vs_trackLen.pdf`
+  - dE/dx: `fig_dEdx_hits.pdf`, `fig_dEdx.pdf` (zoom), `fig_dEdx_tail.pdf` (log)
   - Pixel examples: `fig_pixelized_examples.pdf` + per-event PNGs in `images/` (quality events with scale bars and annotations)
-  - Pixel metrics (quality overlaid on "all" unless `--quality-only`): `fig_cluster_size.pdf`, `fig_cluster_charge.pdf`, `fig_sigma_trans.pdf`, `fig_sigma_long.pdf`, `fig_elongation.pdf`, `fig_sigma_x_axis.pdf`, `fig_sigma_y_axis.pdf`
-  - Length diagnostics: `fig_length_pix_geom.pdf`, `fig_length_pix_img.pdf`, `fig_length_pix.pdf` (geom vs PCA extent)
+  - Pixel metrics (quality overlaid on "all" unless `--quality-only`): `fig_cluster_size.pdf`, `fig_cluster_charge.pdf`, `fig_sigma_trans.pdf`, `fig_sigma_long.pdf`, `fig_elongation.pdf`, `fig_sigma_x_axis.pdf`, `fig_sigma_y_axis.pdf`, `fig_width_vs_coszen.pdf`, `fig_charge_vs_coszen.pdf`
+  - Length diagnostics: `fig_length_pix_geom.pdf`, `fig_length_pix_img.pdf`, `fig_length_pix.pdf` (PCA vs expected 2D), `fig_length_pix_legacy.pdf` (legacy 3D vs PCA)
 - Tables:
   - `tables/validation_summary.csv` (energy, clamp counts, CCD stats, dE/dx, impact uniformity, truncation fraction, sigma/length stats)
   - `tables/pixel_metrics_all.csv` and `tables/pixel_metrics_quality.csv` (pixel-level metrics with truncation flag)

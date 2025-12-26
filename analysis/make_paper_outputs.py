@@ -169,11 +169,15 @@ def compute_pixel_metric(
     canvas_size,
     margin_pix: int,
 ):
+    track_len_cm = float(events["trackLenCCD"][idx])
+    edep_gev = float(events["EdepCCD"][idx])
+    theta = float(events["thetaPri"][idx])
+    phi = float(events["phiPri"][idx])
     img = build_track_image(
-        events["EdepCCD"][idx],
-        events["trackLenCCD"][idx],
-        events["thetaPri"][idx],
-        events["phiPri"][idx],
+        edep_gev,
+        track_len_cm,
+        theta,
+        phi,
         (events["xEntryCCD"][idx], events["yEntryCCD"][idx], events["zEntryCCD"][idx]),
         params,
         canvas_mode=canvas_mode,
@@ -186,16 +190,26 @@ def compute_pixel_metric(
         img,
         threshold=threshold,
         pixel_size_microns=params.pixel_size_microns,
-        track_len_cm=float(events["trackLenCCD"][idx]),
+        track_len_cm=track_len_cm,
         edge_margin=1,
     )
+    # track_len_cm is 3D chord length (cm); PCA length is 2D in the image plane using pixel_size_microns.
+    length_expected_cm = expected_l2d_cm_for_event(events, idx, track_len_cm, theta)
+    length_expected_pix = float("nan")
+    if math.isfinite(length_expected_cm) and length_expected_cm >= 0:
+        length_expected_pix = length_expected_cm * 1.0e4 / params.pixel_size_microns
+    length_image_cm = metrics["length_pix_img"] * params.pixel_size_microns * 1.0e-4
     metrics.update(
         {
             "event_idx": int(idx),
-            "edep_GeV": float(events["EdepCCD"][idx]),
-            "trackLen_cm": float(events["trackLenCCD"][idx]),
-            "theta": float(events["thetaPri"][idx]),
-            "phi": float(events["phiPri"][idx]),
+            "edep_GeV": edep_gev,
+            "trackLen_cm": track_len_cm,
+            "theta": theta,
+            "phi": phi,
+            "length_geom_cm": track_len_cm,
+            "length_expected_cm": length_expected_cm,
+            "length_expected_pix": length_expected_pix,
+            "length_image_cm": length_image_cm,
             "canvas_w": int(img.shape[1]),
             "canvas_h": int(img.shape[0]),
             "peak_charge": peak,
@@ -396,9 +410,9 @@ def plot_pixel_metrics(
     )
 
     fig, ax = plt.subplots()
-    ax.hist(geom_vals, bins=100, range=(lo_axis, hi_axis), histtype="step", lw=2, label="Geometry-based length [pix]")
-    ax.hist(img_vals, bins=100, range=(lo_axis, hi_axis), histtype="step", lw=2, label="Image PCA length [pix]")
-    ax.set_xlabel("Length [pix] (geom vs PCA)")
+    ax.hist(geom_vals, bins=100, range=(lo_axis, hi_axis), histtype="step", lw=2, label="Geometry length (3D) [pix]")
+    ax.hist(img_vals, bins=100, range=(lo_axis, hi_axis), histtype="step", lw=2, label="Image PCA length (2D) [pix]")
+    ax.set_xlabel("Length [pix] (legacy 3D vs 2D)")
     ax.set_ylabel("Events")
     ax.set_xlim(lo_axis, hi_axis)
     if overflow_geom > 0 or overflow_img > 0:
@@ -418,8 +432,115 @@ def plot_pixel_metrics(
         if fail_on_warning:
             raise SystemExit(warn_msg)
     fig.tight_layout()
+    fig.savefig(outdir / "fig_length_pix_legacy.pdf")
+    plt.close(fig)
+
+
+def plot_length_comparison(
+    length_source: List[Dict[str, float]],
+    events: Dict[str, np.ndarray],
+    cos_down: np.ndarray,
+    mask_hit: np.ndarray,
+    ccd_thickness_cm: float,
+    outdir: Path,
+) -> Dict[str, float]:
+    idxs = np.asarray([m["event_idx"] for m in length_source], dtype=int)
+    length_expected_cm = np.asarray([m["length_expected_cm"] for m in length_source], dtype=float)
+    length_image_cm = np.asarray([m["length_image_cm"] for m in length_source], dtype=float)
+
+    valid = np.isfinite(length_expected_cm) & (length_expected_cm > 0) & np.isfinite(length_image_cm)
+    idxs = idxs[valid]
+    length_expected_cm = length_expected_cm[valid]
+    length_image_cm = length_image_cm[valid]
+    ratio = length_image_cm / length_expected_cm if length_expected_cm.size else np.array([])
+
+    ratio_median = float(np.median(ratio)) if ratio.size else 0.0
+    ratio_through_median = 0.0
+    through_count = 0
+    if idxs.size:
+        if "zEntryCCD" in events and "zExitCCD" in events and ccd_thickness_cm > 0:
+            z_span = np.abs(np.asarray(events["zExitCCD"])[idxs] - np.asarray(events["zEntryCCD"])[idxs])
+            through_mask = z_span > 0.8 * ccd_thickness_cm
+        else:
+            lcos = np.asarray(events["trackLenCCD"])[idxs] * np.abs(cos_down[idxs])
+            through_mask = np.abs(lcos - ccd_thickness_cm) < 0.2 * ccd_thickness_cm if ccd_thickness_cm > 0 else np.ones_like(lcos, dtype=bool)
+        through_count = int(np.sum(through_mask))
+        ratio_through = ratio[through_mask]
+        if ratio_through.size:
+            ratio_through_median = float(np.median(ratio_through))
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
+    if length_expected_cm.size:
+        h = axes[0].hist2d(length_expected_cm, length_image_cm, bins=60, cmap="viridis")
+        plt.colorbar(h[3], ax=axes[0])
+        xlim = percentile_limits(length_expected_cm, 1, 99)
+        ylim = percentile_limits(length_image_cm, 1, 99)
+        if xlim is not None:
+            axes[0].set_xlim(xlim[0], xlim[1])
+        if ylim is not None:
+            axes[0].set_ylim(ylim[0], ylim[1])
+        lim_max = max(axes[0].get_xlim()[1], axes[0].get_ylim()[1])
+        axes[0].plot([0, lim_max], [0, lim_max], color="white", lw=1, linestyle="--")
+    else:
+        axes[0].text(0.5, 0.5, "No events", transform=axes[0].transAxes, ha="center", va="center")
+    axes[0].set_xlabel("L2D_expected [cm]")
+    axes[0].set_ylabel("L2D_image (PCA) [cm]")
+    axes[0].set_title("PCA vs expected projected length")
+
+    if ratio.size:
+        ratio_xlim = percentile_limits(ratio, 1, 99)
+        axes[1].hist(ratio, bins=60, histtype="step", lw=2)
+        if ratio_xlim is not None:
+            axes[1].set_xlim(ratio_xlim[0], ratio_xlim[1])
+        axes[1].axvline(ratio_median, color="red", linestyle="--", label=f"median={ratio_median:.2f}")
+        if ratio_through_median > 0:
+            axes[1].axvline(
+                ratio_through_median,
+                color="orange",
+                linestyle="--",
+                label=f"through median={ratio_through_median:.2f}",
+            )
+        axes[1].legend()
+    else:
+        axes[1].text(0.5, 0.5, "No events", transform=axes[1].transAxes, ha="center", va="center")
+    axes[1].set_xlabel("L2D_image / L2D_expected")
+    axes[1].set_ylabel("Events")
+    axes[1].set_title("Length ratio")
+
+    l3d_hit = np.asarray(events["trackLenCCD"])[mask_hit]
+    cos_hit = np.asarray(cos_down)[mask_hit]
+    if l3d_hit.size:
+        h = axes[2].hist2d(cos_hit, l3d_hit, bins=60, cmap="viridis")
+        plt.colorbar(h[3], ax=axes[2])
+        ylim = percentile_limits(l3d_hit, 1, 99)
+        if ylim is not None:
+            axes[2].set_ylim(ylim[0], ylim[1])
+        axes[2].set_xlim(0.0, 1.0)
+        if ccd_thickness_cm > 0:
+            cos_vals = np.linspace(0.05, 1.0, 50)
+            axes[2].plot(cos_vals, ccd_thickness_cm / cos_vals, color="white", lw=1, linestyle="--", label="thickness/|cos|")
+            axes[2].legend()
+    else:
+        axes[2].text(0.5, 0.5, "No events", transform=axes[2].transAxes, ha="center", va="center")
+    axes[2].set_xlabel("cos_{zenith}^{down}")
+    axes[2].set_ylabel("L3D [cm]")
+    axes[2].set_title("3D chord vs cos(zenith)")
+
+    fig.tight_layout()
     fig.savefig(outdir / "fig_length_pix.pdf")
     plt.close(fig)
+
+    print(
+        f"[length] L2D_image/L2D_expected median={ratio_median:.3f} "
+        f"(through-going median={ratio_through_median:.3f}, n_through={through_count})"
+    )
+    return {
+        "length_ratio_median": ratio_median,
+        "length_ratio_through_median": ratio_through_median,
+        "length_ratio_through_count": float(through_count),
+        "length_ratio_count": float(ratio.size),
+    }
 
 
 def impact_uniformity_stat(x, y, bins=20):
@@ -436,12 +557,13 @@ def write_units_file(path: Path, params: CCDParams):
 - EevtPri: primary kinetic energy (GeV).
 - muonX0/Y0/Z0 and muonXImp/YImp/ZImp: cm.
 - EdepCCD: total deposited energy in CCD sensitive volume (GeV).
-- trackLenCCD: chord length between first and last CCD step (cm).
+- trackLenCCD: 3D chord length between first and last CCD step (cm).
+- xEntryCCD/xExitCCD/yEntryCCD/yExitCCD: cm; L2D_expected = sqrt((xExit-xEntry)^2 + (yExit-yEntry)^2).
 - dirX/dirY/dirZ: primary momentum direction (unit vector).
 - Pixelization: pixel size {params.pixel_size_microns} um, CCD thickness {params.thickness_microns} um, {params.ev_per_electron} eV per electron.
 - dE/dx: computed as EdepCCD * 1000 / trackLenCCD (MeV/cm) for trackLenCCD>0. Plots optionally require trackLenCCD>0.01 cm to avoid extreme ratios from grazing hits.
 - Canvas: adaptive mode sizes canvas to track length with margin; truncation flag marks charge touching the image edge.
-- PCA metrics: sigma_long/sigma_trans = sqrt(eigenvalues of charge covariance); elongation = sigma_long/sigma_trans; length_pix_img = p99-p1 along PCA axis; length_pix_geom = trackLenCCD * 1e4 / pixel_size.
+- PCA metrics: sigma_long/sigma_trans = sqrt(eigenvalues of charge covariance); elongation = sigma_long/sigma_trans; length_pix_img = p99-p1 along PCA axis (2D image plane); length_pix_geom = trackLenCCD * 1e4 / pixel_size (3D chord in pixels); length_expected_cm/pix = entry/exit projected length.
 - Quality cuts: EdepCCD>0, trackLenCCD>0, is_truncated=False."""
     path.write_text(units_text)
 
@@ -449,6 +571,60 @@ def write_units_file(path: Path, params: CCDParams):
 def dedx_mev_per_cm(edep_GeV: np.ndarray, track_len_cm: np.ndarray) -> np.ndarray:
     mask = (track_len_cm > 0) & (edep_GeV > 0)
     return edep_GeV[mask] * 1000.0 / track_len_cm[mask]
+
+
+def compute_hit_mask(events: Dict[str, np.ndarray]) -> np.ndarray:
+    edep = np.asarray(events["EdepCCD"])
+    track_len = np.asarray(events["trackLenCCD"])
+    mask = (edep > 0) | (track_len > 0)
+    if "nStepsCCD" in events:
+        mask |= np.asarray(events["nStepsCCD"]) > 0
+    return mask
+
+
+def compute_expected_l2d_cm(events: Dict[str, np.ndarray]) -> np.ndarray:
+    if all(k in events for k in ("xEntryCCD", "xExitCCD", "yEntryCCD", "yExitCCD")):
+        dx = np.asarray(events["xExitCCD"]) - np.asarray(events["xEntryCCD"])
+        dy = np.asarray(events["yExitCCD"]) - np.asarray(events["yEntryCCD"])
+        return np.sqrt(dx * dx + dy * dy)
+    if "dirX" in events and "dirY" in events:
+        transverse = np.sqrt(np.asarray(events["dirX"]) ** 2 + np.asarray(events["dirY"]) ** 2)
+        return np.asarray(events["trackLenCCD"]) * transverse
+    return np.asarray(events["trackLenCCD"]) * np.sin(np.asarray(events["thetaPri"]))
+
+
+def expected_l2d_cm_for_event(
+    events: Dict[str, np.ndarray], idx: int, track_len_cm: float, theta: float
+) -> float:
+    # Entry/exit positions are in cm; expected L2D is the x-y projected span.
+    if all(k in events for k in ("xEntryCCD", "xExitCCD", "yEntryCCD", "yExitCCD")):
+        dx = float(events["xExitCCD"][idx]) - float(events["xEntryCCD"][idx])
+        dy = float(events["yExitCCD"][idx]) - float(events["yEntryCCD"][idx])
+        return math.sqrt(dx * dx + dy * dy)
+    if "dirX" in events and "dirY" in events:
+        dirx = float(events["dirX"][idx])
+        diry = float(events["dirY"][idx])
+        return track_len_cm * math.sqrt(dirx * dirx + diry * diry)
+    return track_len_cm * math.sin(theta)
+
+
+def binned_efficiency(values: np.ndarray, mask: np.ndarray, bins: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    counts_all, edges = np.histogram(values, bins=bins)
+    counts_hit, _ = np.histogram(values[mask], bins=edges)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        eff = counts_hit / counts_all
+    eff = np.nan_to_num(eff)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return centers, eff
+
+
+def binned_profile(x: np.ndarray, y: np.ndarray, bins: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    counts, edges = np.histogram(x, bins=bins)
+    sums, _ = np.histogram(x, bins=edges, weights=y)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        means = sums / counts
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    return centers, means, counts
 
 
 def main():
@@ -528,6 +704,8 @@ def main():
                     val = val.item()
                 run_info[dst] = val
     n_events = len(events["EevtPri"])
+    edep_ccd = np.asarray(events["EdepCCD"])
+    track_len_ccd = np.asarray(events["trackLenCCD"])
     weights = None
     if "eventLivetime_s" in events:
         weights = np.asarray(events["eventLivetime_s"])
@@ -537,13 +715,11 @@ def main():
     ccd_thickness_cm = float(run_info.get("ccdThickness_cm", params.thickness_microns * 1e-4))
     lcos_median_val = None
     lcos_ratio_val = None
-
-    # Generator/source plots
-    fig, ax = plt.subplots()
-    make_hist1d(ax, [(events["EevtPri"], None)], bins=120, xlabel="E_{#mu} [GeV]", logy=True, title="Primary muon energy")
-    fig.tight_layout()
-    fig.savefig(plots_dir / "fig_energy_spectrum.pdf")
-    plt.close(fig)
+    mask_hit = compute_hit_mask(events)
+    mask_pixel = (edep_ccd > 0) & (track_len_ccd > 0)
+    n_hits = int(np.sum(mask_hit))
+    l2d_expected_cm = compute_expected_l2d_cm(events)
+    mask_quality = np.zeros(n_events, dtype=bool)
 
     if "muonCosTheta" in events:
         cos_down = np.asarray(events["muonCosTheta"])
@@ -551,16 +727,82 @@ def main():
         cos_down = np.clip(-np.cos(events["thetaPri"]), 0.0, 1.0)
     clamp_low = int(np.sum(-np.cos(events["thetaPri"]) < 0))
     clamp_high = int(np.sum(-np.cos(events["thetaPri"]) > 1))
+
+    energy_pri = np.asarray(events["EevtPri"])
+    energy_hits = energy_pri[mask_hit]
+
+    # Generator/source plots
     fig, ax = plt.subplots()
     make_hist1d(
         ax,
-        [(cos_down, None)],
+        [(energy_pri, "All thrown")],
+        bins=120,
+        xlabel="E_{#mu} [GeV]",
+        logy=True,
+        title="Primary muon energy (all thrown)",
+    )
+    fig.tight_layout()
+    fig.savefig(plots_dir / "fig_energy_spectrum.pdf")
+    plt.close(fig)
+
+    fig, ax = plt.subplots()
+    make_hist1d(
+        ax,
+        [(energy_pri, "All thrown"), (energy_hits, "CCD hits")],
+        bins=120,
+        xlabel="E_{#mu} [GeV]",
+        logy=True,
+        title="Primary energy (all vs hits)",
+    )
+    fig.tight_layout()
+    fig.savefig(plots_dir / "validate_energy_hits_logy.pdf")
+    plt.close(fig)
+
+    fig, ax = plt.subplots()
+    make_hist1d(
+        ax,
+        [(energy_pri, "All thrown"), (energy_hits, "CCD hits")],
+        bins=80,
+        xlabel="E_{#mu} [GeV]",
+        title="Primary energy (zoom)",
+    )
+    ax.set_xlim(1.0, 50.0)
+    fig.tight_layout()
+    fig.savefig(plots_dir / "validate_energy_hits_zoom.pdf")
+    plt.close(fig)
+    fig, ax = plt.subplots()
+    make_hist1d(
+        ax,
+        [(cos_down, "All thrown")],
         bins=60,
         xlabel="cos_{zenith}^{down}",
-        title=f"Downward cos(zenith) (clamp low={clamp_low}, high={clamp_high})",
+        title=f"Downward cos(zenith) all thrown (clamp low={clamp_low}, high={clamp_high})",
     )
     fig.tight_layout()
     fig.savefig(plots_dir / "fig_coszenith_down.pdf")
+    plt.close(fig)
+
+    fig, ax = plt.subplots()
+    ax.hist(cos_down, bins=60, histtype="step", lw=2, density=True, label="All thrown")
+    ax.hist(cos_down[mask_hit], bins=60, histtype="step", lw=2, density=True, label="CCD hits")
+    ax.set_xlabel("cos_{zenith}^{down}")
+    ax.set_ylabel("Normalized density")
+    ax.set_title("cos(zenith): all vs hits (normalized)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(plots_dir / "fig_coszen_all_vs_hits.pdf")
+    plt.close(fig)
+
+    fig, ax = plt.subplots()
+    cos_bins = np.linspace(0.0, 1.0, 21)
+    centers, eff = binned_efficiency(cos_down, mask_hit, cos_bins)
+    ax.plot(centers, eff, marker="o", lw=2)
+    ax.set_xlabel("cos_{zenith}^{down}")
+    ax.set_ylabel("Hit efficiency")
+    ax.set_ylim(0.0, 1.05)
+    ax.set_title("CCD hit efficiency vs cos(zenith)")
+    fig.tight_layout()
+    fig.savefig(plots_dir / "fig_hit_efficiency_vs_coszen.pdf")
     plt.close(fig)
 
     muon_pdg = events.get("muonPDG")
@@ -578,7 +820,15 @@ def main():
         print(f"[charge] N(mu+)={n_mu_plus:.0f}, N(mu-)={n_mu_minus:.0f}, mu+/mu-={mu_ratio_sampled if mu_ratio_sampled is not None else 'nan'}")
 
     fig, ax = plt.subplots()
-    make_2d(ax, events["muonXImp"], events["muonYImp"], bins=80, xlabel="x_imp [cm]", ylabel="y_imp [cm]", title="Impact plane")
+    make_2d(
+        ax,
+        events["muonXImp"],
+        events["muonYImp"],
+        bins=80,
+        xlabel="x_imp [cm]",
+        ylabel="y_imp [cm]",
+        title="Impact plane (all thrown)",
+    )
     # overlay CCD footprint +/-0.75 cm
     for x in (-0.75, 0.75):
         ax.axvline(x, color="red", linestyle="--", linewidth=1)
@@ -589,34 +839,55 @@ def main():
     plt.close(fig)
 
     fig, ax = plt.subplots()
-    make_hist1d(ax, [(events["muonZ0"], None)], bins=40, xlabel="z0 [cm]", title="Source height")
+    make_hist1d(ax, [(events["muonZ0"], None)], bins=40, xlabel="z0 [cm]", title="Source height (all thrown)")
     fig.tight_layout()
     fig.savefig(plots_dir / "fig_z0.pdf")
     plt.close(fig)
 
     if "muonX0" in events and "muonY0" in events:
         fig, ax = plt.subplots()
-        make_2d(ax, events["muonX0"], events["muonY0"], bins=80, xlabel="x0 [cm]", ylabel="y0 [cm]", title="Source plane (x0,y0)")
+        make_2d(
+            ax,
+            events["muonX0"],
+            events["muonY0"],
+            bins=80,
+            xlabel="x0 [cm]",
+            ylabel="y0 [cm]",
+            title="Source plane (all thrown)",
+        )
         fig.tight_layout()
         fig.savefig(plots_dir / "fig_xy0.pdf")
         plt.close(fig)
 
-    # CCD summaries
+    # CCD summaries (hits only)
     fig, ax = plt.subplots()
-    make_hist1d(ax, [(events["EdepCCD"], None)], bins=100, xlabel="Edep CCD [GeV]", title="CCD deposited energy", logy=True)
+    make_hist1d(
+        ax,
+        [(edep_ccd[mask_hit], "CCD hits")],
+        bins=100,
+        xlabel="Edep CCD [GeV]",
+        title="CCD deposited energy (hits)",
+        logy=True,
+    )
     fig.tight_layout()
     fig.savefig(plots_dir / "fig_edep_ccd.pdf")
     plt.close(fig)
 
     fig, ax = plt.subplots()
-    make_hist1d(ax, [(events["trackLenCCD"], None)], bins=100, xlabel="track length CCD [cm]", title="CCD track length")
+    make_hist1d(
+        ax,
+        [(track_len_ccd[mask_hit], "CCD hits")],
+        bins=100,
+        xlabel="track length CCD [cm]",
+        title="CCD track length (hits)",
+    )
     fig.tight_layout()
     fig.savefig(plots_dir / "fig_trackLen_ccd.pdf")
     plt.close(fig)
 
     fig, ax = plt.subplots()
-    valid_len = events["trackLenCCD"]
-    valid_edep = events["EdepCCD"]
+    valid_len = track_len_ccd[mask_hit]
+    valid_edep = edep_ccd[mask_hit]
     make_2d(
         ax,
         valid_len,
@@ -624,7 +895,7 @@ def main():
         bins=60,
         xlabel="track length CCD [cm]",
         ylabel="Edep CCD [GeV]",
-        title="Edep vs length",
+        title="Edep vs length (hits)",
     )
     fig.tight_layout()
     fig.savefig(plots_dir / "fig_edep_vs_trackLen.pdf")
@@ -633,12 +904,12 @@ def main():
     fig, ax = plt.subplots()
     make_2d(
         ax,
-        cos_down,
-        events["trackLenCCD"],
+        cos_down[mask_hit],
+        track_len_ccd[mask_hit],
         bins=60,
         xlabel="cos_{zenith}^{down}",
         ylabel="track length CCD [cm]",
-        title="Incidence vs CCD length",
+        title="Incidence vs CCD length (hits)",
     )
     fig.tight_layout()
     fig.savefig(plots_dir / "fig_costheta_vs_trackLen.pdf")
@@ -646,7 +917,7 @@ def main():
 
     # L*cos(theta) sanity check vs CCD thickness
     if ccd_thickness_cm > 0.0:
-        lcos = np.asarray(events["trackLenCCD"]) * np.abs(cos_down)
+        lcos = track_len_ccd[mask_hit] * np.abs(cos_down[mask_hit])
         lcos = lcos[lcos > 0]
         if lcos.size:
             lcos_median = float(np.median(lcos))
@@ -670,10 +941,10 @@ def main():
         else:
             warnings.append("No valid track lengths to compute L*cos(theta).")
 
-    # dE/dx (geometry-level)
-    dedx_all = dedx_mev_per_cm(events["EdepCCD"], events["trackLenCCD"])
-    dedx_mask = events["trackLenCCD"] > 0.01
-    dedx_plot = dedx_mev_per_cm(events["EdepCCD"][dedx_mask], events["trackLenCCD"][dedx_mask])
+    # dE/dx (geometry-level, hits only)
+    dedx_all = dedx_mev_per_cm(edep_ccd[mask_hit], track_len_ccd[mask_hit])
+    dedx_mask = (track_len_ccd > 0.01) & mask_hit
+    dedx_plot = dedx_mev_per_cm(edep_ccd[dedx_mask], track_len_ccd[dedx_mask])
     if dedx_all.size:
         dedx_p = {p: float(np.percentile(dedx_all, p)) for p in [50, 84, 95, 99, 99.9]}
         print(
@@ -684,11 +955,21 @@ def main():
         hi_tail = max(dedx_p[99.9], hi_zoom)
 
         fig, ax = plt.subplots()
+        ax.hist(dedx_all, bins=120, histtype="step", lw=2)
+        ax.set_xlabel("dE/dx [MeV/cm]")
+        ax.set_ylabel("Events")
+        ax.set_yscale("log")
+        ax.set_title("dE/dx (hits)")
+        fig.tight_layout()
+        fig.savefig(plots_dir / "fig_dEdx_hits.pdf")
+        plt.close(fig)
+
+        fig, ax = plt.subplots()
         ax.hist(dedx_plot, bins=100, range=(0, hi_zoom), histtype="step", lw=2, label="trackLen>0.01 cm")
         ax.set_xlabel("dE/dx [MeV/cm]")
         ax.set_ylabel("Events")
         ax.set_xlim(0, hi_zoom)
-        ax.set_title("dE/dx = Edep/trackLen (zoom)")
+        ax.set_title("dE/dx = Edep/trackLen (hits, zoom)")
         ax.legend()
         fig.tight_layout()
         fig.savefig(plots_dir / "fig_dEdx.pdf")
@@ -700,7 +981,7 @@ def main():
         ax.set_ylabel("Events")
         ax.set_xlim(0, hi_tail)
         ax.set_yscale("log")
-        ax.set_title("dE/dx tail (log-y)")
+        ax.set_title("dE/dx tail (hits, log-y)")
         ax.legend()
         fig.tight_layout()
         fig.savefig(plots_dir / "fig_dEdx_tail.pdf")
@@ -709,13 +990,35 @@ def main():
         if dedx_p[50] < 0.5 or dedx_p[50] > 10.0:
             warnings.append(f"dE/dx median {dedx_p[50]:.2f} MeV/cm outside expected muon range (0.5-10).")
 
+    # Edep vs length with dE/dx guide (hits only)
+    if mask_hit.any():
+        fig, ax = plt.subplots()
+        make_2d(
+            ax,
+            track_len_ccd[mask_hit],
+            edep_ccd[mask_hit],
+            bins=60,
+            xlabel="L3D (trackLenCCD) [cm]",
+            ylabel="Edep CCD [GeV]",
+            title="Edep vs L3D (hits)",
+        )
+        if dedx_all.size:
+            dedx_mean = float(np.mean(dedx_all))
+            x_line = np.linspace(0.0, float(np.percentile(track_len_ccd[mask_hit], 99)), 50)
+            y_line = dedx_mean * x_line / 1000.0
+            ax.plot(x_line, y_line, color="white", lw=1, linestyle="--", label=f"mean dE/dx={dedx_mean:.2f} MeV/cm")
+            ax.legend()
+        fig.tight_layout()
+        fig.savefig(plots_dir / "fig_edep_vs_len_hits.pdf")
+        plt.close(fig)
+
     # Pixelization
-    valid_mask = (events["EdepCCD"] > 0) & (events["trackLenCCD"] > 0)
-    valid_idxs = np.nonzero(valid_mask)[0]
+    valid_idxs = np.nonzero(mask_pixel)[0]
     metrics_all: List[Dict[str, float]] = []
     metrics_quality: List[Dict[str, float]] = []
-    hit_fraction = float(valid_mask.sum()) / float(n_events) if n_events else 0.0
-    hit_rate_hz = float(valid_mask.sum()) / total_livetime if total_livetime > 0 else 0.0
+    length_stats: Dict[str, float] = {}
+    hit_fraction = float(n_hits) / float(n_events) if n_events else 0.0
+    hit_rate_hz = float(n_hits) / total_livetime if total_livetime > 0 else 0.0
     geom_intersect_fraction = None
     if "geomIntersectsCCD" in events:
         geom_mask = np.asarray(events["geomIntersectsCCD"]) > 0.5
@@ -750,6 +1053,10 @@ def main():
         metrics_all, metrics_quality = collect_pixel_metrics(
             events, metrics_idxs, params, args.canvas_mode, args.canvas_size, args.margin_pix
         )
+        if metrics_quality:
+            # mask_quality covers the subset of events used for pixel metrics.
+            quality_idxs = np.asarray([m["event_idx"] for m in metrics_quality], dtype=int)
+            mask_quality[quality_idxs] = True
         plot_pixel_metrics(
             metrics_all,
             metrics_quality,
@@ -759,11 +1066,65 @@ def main():
             fail_on_warning=args.fail_on_warning,
         )
 
+        length_source = metrics_quality if (args.quality_only and metrics_quality) else (metrics_quality or metrics_all)
+        if length_source:
+            length_stats = plot_length_comparison(length_source, events, cos_down, mask_hit, ccd_thickness_cm, plots_dir)
+
+        metrics_source = metrics_quality if metrics_quality else metrics_all
+        if metrics_source:
+            metric_idxs = np.asarray([m["event_idx"] for m in metrics_source], dtype=int)
+            cos_metric = cos_down[metric_idxs]
+            sigma_trans = np.asarray([m["sigma_trans"] for m in metrics_source], dtype=float)
+            charge = np.asarray([m["charge"] for m in metrics_source], dtype=float)
+
+            fig, ax = plt.subplots()
+            h = ax.hist2d(cos_metric, sigma_trans, bins=[40, 60], cmap="viridis")
+            plt.colorbar(h[3], ax=ax)
+            centers, means, counts = binned_profile(cos_metric, sigma_trans, np.linspace(0.0, 1.0, 21))
+            valid = counts > 0
+            if np.any(valid):
+                ax.plot(centers[valid], means[valid], color="white", lw=1.5, label="Mean")
+                ax.legend()
+            ax.set_xlabel("cos_{zenith}^{down}")
+            ax.set_ylabel("Sigma_trans (PCA) [pix]")
+            ax.set_title("Cluster width vs cos(zenith)")
+            fig.tight_layout()
+            fig.savefig(plots_dir / "fig_width_vs_coszen.pdf")
+            plt.close(fig)
+
+            fig, ax = plt.subplots()
+            h = ax.hist2d(cos_metric, charge, bins=[40, 60], cmap="viridis")
+            plt.colorbar(h[3], ax=ax)
+            centers, means, counts = binned_profile(cos_metric, charge, np.linspace(0.0, 1.0, 21))
+            valid = counts > 0
+            if np.any(valid):
+                ax.plot(centers[valid], means[valid], color="white", lw=1.5, label="Mean")
+                ax.legend()
+            ax.set_xlabel("cos_{zenith}^{down}")
+            ax.set_ylabel("Cluster charge [e-]")
+            ax.set_title("Cluster charge vs cos(zenith)")
+            fig.tight_layout()
+            fig.savefig(plots_dir / "fig_charge_vs_coszen.pdf")
+            plt.close(fig)
+
+    dedx_mean_val = float(np.mean(dedx_all)) if dedx_all.size else 0.0
+    dedx_rms_val = float(np.sqrt(np.mean(dedx_all ** 2))) if dedx_all.size else 0.0
+    ratio_through_median = float(length_stats.get("length_ratio_through_median", 0.0))
+    ratio_through_count = int(length_stats.get("length_ratio_through_count", 0.0))
+    print(
+        "[diag] "
+        f"N_thrown={n_events}, N_hits={n_hits}, hit_fraction={hit_fraction:.4f}, "
+        f"dEdx_mean={dedx_mean_val:.2f} MeV/cm, dEdx_rms={dedx_rms_val:.2f} MeV/cm, "
+        f"L2D_ratio_through_median={ratio_through_median:.3f} (n_through={ratio_through_count})"
+    )
+
     # Tables
     truncated_count = max(0, len(metrics_all) - len(metrics_quality))
     validation_summary = {
         "n_events": int(n_events),
-        "n_events_ccd": int(valid_mask.sum()),
+        "n_thrown": int(n_events),
+        "n_events_ccd": int(n_hits),
+        "n_hits": int(n_hits),
         "n_pixel_metrics_all": int(len(metrics_all)),
         "n_pixel_metrics_quality": int(len(metrics_quality)),
         "n_truncated_flagged": int(truncated_count),
@@ -793,6 +1154,10 @@ def main():
     validation_summary.update({f"energy_{k}": v for k, v in basic_stats(events["EevtPri"]).items()})
     validation_summary.update({f"EdepCCD_{k}": v for k, v in basic_stats(events["EdepCCD"]).items()})
     validation_summary.update({f"trackLenCCD_{k}": v for k, v in basic_stats(events["trackLenCCD"]).items()})
+    if l2d_expected_cm.size:
+        validation_summary.update(
+            {f"L2D_expected_hits_{k}": v for k, v in basic_stats(l2d_expected_cm[mask_hit]).items()}
+        )
     validation_summary["impact_uniformity"] = impact_uniformity_stat(events["muonXImp"], events["muonYImp"])
     if "EdepOther" in events:
         validation_summary.update({f"EdepOther_{k}": v for k, v in basic_stats(events["EdepOther"]).items()})
@@ -811,6 +1176,8 @@ def main():
     if metrics_quality:
         validation_summary.update({f"sigma_trans_{k}": v for k, v in basic_stats(np.asarray([m["sigma_trans"] for m in metrics_quality])).items()})
         validation_summary.update({f"length_pix_geom_{k}": v for k, v in basic_stats(np.asarray([m["length_pix_geom"] for m in metrics_quality])).items()})
+    if length_stats:
+        validation_summary.update(length_stats)
     if warnings:
         validation_summary["warnings"] = "; ".join(warnings)
     for k in [
