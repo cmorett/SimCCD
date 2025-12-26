@@ -1,0 +1,40 @@
+# Tier B: physically realistic cosmic muons sampled from Modified Gaisser.
+# The source plane is larger than the CCD, so expect a mix of hits/misses.
+
+/analysis/setFileName tierB_run
+/analysis/ntuple/setFileName 0 tierB_run
+/analysis/ntuple/setFileName 1 tierB_run
+
+# Muon generator settings
+/generator/muonMode tierB_plane_flux
+/generator/fluxModel guan2015
+/generator/useFixedEnergy false
+/generator/EminGeV 1.0
+/generator/EmaxGeV 10000
+/generator/thetaMax 80 deg
+/generator/sourcePlaneZ 8 cm
+/generator/sourcePlaneAutoSize false
+/generator/sourcePlaneLx 10 cm
+/generator/sourcePlaneLy 10 cm
+/generator/sourcePlaneMargin 0.0 cm
+/generator/muonChargeMode fixedRatio
+/generator/muonPlusToMinusRatio 1.25
+
+# Optional overburden slab (disabled by default)
+/sim/overburden/enable false
+/sim/overburden/thickness 0 cm
+/sim/overburden/zTop 8 cm
+/sim/overburden/material G4_CONCRETE
+
+# CCD-specific region controls (disabled by default)
+/sim/cuts/ccdGammaCut 0 cm
+/sim/cuts/ccdElectronCut 0 cm
+/sim/cuts/ccdPositronCut 0 cm
+/sim/ccd/maxStep 0 cm
+
+# Seed from wall-clock for convenience; set /runAction/useFixedSeeds for reproducibility.
+/runAction/useTimeSeed true
+
+/run/verbose 1
+/run/initialize
+/run/beamOn 10000

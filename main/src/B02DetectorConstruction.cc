@@ -14,8 +14,11 @@
 #include "G4Material.hh"
 #include "G4NistManager.hh"
 #include "G4PVPlacement.hh"
+#include "G4ProductionCuts.hh"
+#include "G4GenericMessenger.hh"
 #include "G4MultiUnion.hh"
 #include "G4RotationMatrix.hh"
+#include "G4Region.hh"
 #include "G4RunManager.hh"
 #include "G4SDManager.hh"
 #include "G4SystemOfUnits.hh"
@@ -23,6 +26,7 @@
 #include "G4ThreeVector.hh"
 #include "G4TriangularFacet.hh"
 #include "G4Transform3D.hh"
+#include "G4UserLimits.hh"
 #include "G4VisAttributes.hh"
 
 #include <assimp/Importer.hpp>
@@ -30,6 +34,7 @@
 #include <assimp/scene.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -105,9 +110,37 @@ B02DetectorConstruction::B02DetectorConstruction(GeometryOptions opts)
   if (fOptions.cadMode.empty()) {
     fOptions.cadMode = "merged";
   }
+
+  fOverburdenMessenger =
+      new G4GenericMessenger(this, "/sim/overburden/", "Overburden configuration");
+  fOverburdenMessenger->DeclareProperty("enable", fOverburdenEnabled,
+                                        "Enable a slab above the detector to emulate roof/overburden.");
+  fOverburdenMessenger->DeclarePropertyWithUnit("thickness", "cm", fOverburdenThickness,
+                                                "Overburden thickness");
+  fOverburdenMessenger->DeclarePropertyWithUnit("zTop", "cm", fOverburdenZTop,
+                                                "Z position of the overburden top surface.");
+  fOverburdenMessenger->DeclareProperty("material", fOverburdenMaterial,
+                                        "G4 material name for the overburden (e.g. G4_CONCRETE).");
+
+  fCutsMessenger = new G4GenericMessenger(this, "/sim/cuts/",
+                                          "Production cuts for the CCD scoring region");
+  fCutsMessenger->DeclarePropertyWithUnit("ccdGammaCut", "cm", fCCDGammaCut,
+                                          "Production cut for gammas in the CCD region (0 => default).");
+  fCutsMessenger->DeclarePropertyWithUnit("ccdElectronCut", "cm", fCCDElectronCut,
+                                          "Production cut for electrons in the CCD region (0 => default).");
+  fCutsMessenger->DeclarePropertyWithUnit("ccdPositronCut", "cm", fCCDPositronCut,
+                                          "Production cut for positrons in the CCD region (0 => default).");
+
+  fCCDMessenger = new G4GenericMessenger(this, "/sim/ccd/", "CCD-specific controls");
+  fCCDMessenger->DeclarePropertyWithUnit("maxStep", "cm", fCCDMaxStep,
+                                         "Optional step limit inside the CCD scoring slab (0 disables).");
 }
 
-B02DetectorConstruction::~B02DetectorConstruction() = default;
+B02DetectorConstruction::~B02DetectorConstruction() {
+  delete fOverburdenMessenger;
+  delete fCutsMessenger;
+  delete fCCDMessenger;
+}
 
 void B02DetectorConstruction::DefineMaterials() {
   auto* nist = G4NistManager::Instance();
@@ -130,6 +163,9 @@ G4VPhysicalVolume* B02DetectorConstruction::Construct() {
     fPrimaryScoring = BuildCadGeometry();
   }
 
+  BuildOverburden();
+  BuildCCDOverlay();
+  ConfigureCCDRegion();
   return fWorldPhysical;
 }
 
@@ -255,7 +291,6 @@ G4LogicalVolume* B02DetectorConstruction::BuildCadGeometry() {
     if (fOptions.checkOverlaps) {
       pv->CheckOverlaps(fOptions.overlapSamples, fOptions.overlapTolerance, true, 1);
     }
-    RegisterSensitiveVolume(lv);
   }
 
   return cadVolumes.front();
@@ -297,6 +332,70 @@ G4LogicalVolume* B02DetectorConstruction::BuildCadMergedTessellated(const aiScen
   auto* lv = new G4LogicalVolume(solid, material, "CADAssemblyMerged_lv");
   lv->SetVisAttributes(MakeVisAttributes(G4Colour(0.6, 0.6, 0.8)));
   return lv;
+}
+
+void B02DetectorConstruction::BuildOverburden() {
+  if (!fOverburdenEnabled || fOverburdenThickness <= 0.0) {
+    return;
+  }
+
+  auto* nist = G4NistManager::Instance();
+  G4Material* material = nist->FindOrBuildMaterial(fOverburdenMaterial);
+  if (!material) {
+    G4Exception("B02DetectorConstruction::BuildOverburden", "OverburdenMatMissing",
+                JustWarning,
+                ("Could not find material '" + fOverburdenMaterial +
+                 "'. Overburden disabled.")
+                    .c_str());
+    return;
+  }
+
+  const G4double halfX = 0.45 * fWorldLength;
+  const G4double halfY = 0.45 * fWorldLength;
+  const G4double halfZ = 0.5 * fOverburdenThickness;
+  const G4double zCenter = fOverburdenZTop - halfZ;
+  const G4double halfWorld = 0.5 * fWorldLength;
+  if (std::abs(zCenter) + halfZ > halfWorld) {
+    G4Exception("B02DetectorConstruction::BuildOverburden", "OverburdenOutsideWorld",
+                JustWarning,
+                "Overburden exceeds world bounds; skipping placement.");
+    return;
+  }
+
+  auto* solid = new G4Box("OverburdenSolid", halfX, halfY, halfZ);
+  auto* logical = new G4LogicalVolume(solid, material, "OverburdenLogical");
+  logical->SetVisAttributes(MakeVisAttributes(G4Colour(0.5, 0.5, 0.5), false));
+  new G4PVPlacement(nullptr, G4ThreeVector(0, 0, zCenter), logical, "OverburdenPV",
+                    fWorldLogical, false, 0, fOptions.checkOverlaps);
+}
+
+void B02DetectorConstruction::BuildCCDOverlay() {
+  // Create a thin scoring box representing the CCD active silicon. This is intentionally
+  // small so that misses are not counted as CCD hits even when the CAD model is large.
+  // Dimensions match the legacy px/py footprint (1.5 cm x 1.5 cm) and a thin thickness.
+  if (fCCDOverlayLogical || fOptions.geometryMode == "primitive") {
+    return;
+  }
+
+  auto* nist = G4NistManager::Instance();
+  auto* si = nist->FindOrBuildMaterial("G4_Si");
+
+  const G4double halfX = 0.75 * cm;
+  const G4double halfY = 0.75 * cm;
+  const G4double halfZ = 0.025 * cm;  // 0.5 mm total thickness
+
+  auto* solid = new G4Box("CCDOverlay", halfX, halfY, halfZ);
+  fCCDOverlayLogical = new G4LogicalVolume(solid, si, "CCDOverlayLogical");
+  fCCDOverlayLogical->SetVisAttributes(MakeVisAttributes(G4Colour(0.8, 0.2, 0.2), false));
+
+  G4LogicalVolume* mother = fWorldLogical;
+  if (fPrimaryScoring) {
+    mother = fPrimaryScoring;
+  }
+
+  new G4PVPlacement(nullptr, {}, fCCDOverlayLogical, "CCDOverlayPV", mother, false, 0,
+                    false);
+  RegisterSensitiveVolume(fCCDOverlayLogical);
 }
 
 G4LogicalVolume* B02DetectorConstruction::BuildCadBoundingUnion(const aiScene& scene,
@@ -435,6 +534,48 @@ bool B02DetectorConstruction::IsSensitiveVolume(const G4LogicalVolume* volume) c
   return volume &&
          std::find(fSensitiveVolumes.begin(), fSensitiveVolumes.end(), volume) !=
              fSensitiveVolumes.end();
+}
+
+bool B02DetectorConstruction::IsCCDScoringVolume(const G4LogicalVolume* volume) const {
+  return volume == fCCDOverlayLogical || volume == fPrimaryScoring;
+}
+
+G4double B02DetectorConstruction::GetCCDThickness() const {
+  if (!fCCDOverlayLogical) {
+    return 0.0;
+  }
+  if (const auto* box = dynamic_cast<const G4Box*>(fCCDOverlayLogical->GetSolid())) {
+    return 2.0 * box->GetZHalfLength();
+  }
+  return 0.0;
+}
+
+void B02DetectorConstruction::ConfigureCCDRegion() {
+  if (!fCCDOverlayLogical) {
+    return;
+  }
+
+  auto* region = new G4Region("CCDRegion");
+  region->AddRootLogicalVolume(fCCDOverlayLogical);
+
+  if (fCCDGammaCut > 0.0 || fCCDElectronCut > 0.0 || fCCDPositronCut > 0.0) {
+    auto* cuts = new G4ProductionCuts();
+    if (fCCDGammaCut > 0.0) {
+      cuts->SetProductionCut(fCCDGammaCut, "gamma");
+    }
+    if (fCCDElectronCut > 0.0) {
+      cuts->SetProductionCut(fCCDElectronCut, "e-");
+    }
+    if (fCCDPositronCut > 0.0) {
+      cuts->SetProductionCut(fCCDPositronCut, "e+");
+    }
+    region->SetProductionCuts(cuts);
+  }
+
+  if (fCCDMaxStep > 0.0) {
+    auto* limits = new G4UserLimits(fCCDMaxStep);
+    fCCDOverlayLogical->SetUserLimits(limits);
+  }
 }
 
 std::string B02DetectorConstruction::ResolveAssetsDir() const {

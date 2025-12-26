@@ -126,7 +126,11 @@ set(B02_SCRIPTS
   b02.out
   init_vis.mac
   macros/geom_check.mac
+  macros/run_tierB_cosmic_muons.mac
+  macros/run_tierB_cosmic_muons_20cm.mac
+  macros/run_tierB_paper_default_1M.mac
   macros/run_with_cad.mac
+  macros/run_with_cad_quiet.mac
   macros/run_without_cad.mac
   run1.mac
   run2.mac

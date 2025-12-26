@@ -20,6 +20,8 @@
 // incorporate headers from B02AnalysisManager 
 #include "B02BarHit.hh"
 #include "B02PrimaryGeneratorAction.hh"
+#include "B02RunAction.hh"
+#include <functional>
 
 
 B02EventAction::B02EventAction()
@@ -56,6 +58,9 @@ void B02EventAction::BeginOfEventAction(const G4Event* aEvent)
   fLength = 0.0; // mm
   fEnergy = 0.0;
   fEdepCCDGeV = 0.0;
+  fEdepOtherGeV = 0.0;
+  fEdepGeomFlag = 0.0;
+  fFirstHitIsCCD = 0;
   fNstepsCCD = 0;
   fEntryCCD = G4ThreeVector();
   fExitCCD = G4ThreeVector();
@@ -133,7 +138,38 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
   G4double thetaPri = 0.0;
   G4double phiPri = 0.0;
   G4double primaryEnergy = 0.0;
+  G4double muonWeight = 0.0;
+  G4double eventLivetime = 0.0;
+  G4double muonCosTheta = 1.0;
+  G4double muonEnergySampledGeV = 0.0;
+  G4int muonModeCode = 0;
+  G4int fluxModelCode = 0;
+  G4double cfgSourceZ = 0.0;
+  G4double cfgSourceLx = 0.0;
+  G4double cfgSourceLy = 0.0;
+  G4double cfgThetaMaxDeg = 0.0;
+  G4double cfgEminEff = 0.0;
+  G4double cfgEmaxEff = 0.0;
   G4ThreeVector primaryDir(0.,0.,-1.);
+  G4int muonPDGCode = 13;
+  G4int muonChargeSign = -1;
+  G4int seed1 = 0;
+  G4int seed2 = 0;
+  G4int useTimeSeed = 0;
+  G4int overburdenEnabled = 0;
+  G4double overburdenThickness = 0.0;
+  G4double overburdenZTop = 0.0;
+  G4double overburdenMaterialHash = 0.0;
+  G4double ccdGammaCut = 0.0;
+  G4double ccdElectronCut = 0.0;
+  G4double ccdPositronCut = 0.0;
+  G4double ccdMaxStep = 0.0;
+  G4double ccdThickness = 0.0;
+  G4double gitHashCode = 0.0;
+  G4double macroHashCode = 0.0;
+  G4double macroPathHash = 0.0;
+  G4double physicsListHash = 0.0;
+  G4double muonChargeRatio = 0.0;
 
   if (const auto primaryVertex = aEvent->GetPrimaryVertex(0)) {
     muonX0 = primaryVertex->GetX0();
@@ -142,11 +178,14 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
 
     if (const auto primaryParticle = primaryVertex->GetPrimary(0)) {
       primaryEnergy = primaryParticle->GetKineticEnergy();
+      muonPDGCode = primaryParticle->GetPDGcode();
+      muonChargeSign = (muonPDGCode < 0) ? 1 : -1;
       const auto momentum = primaryParticle->GetMomentum();
       if (momentum.mag2() > 0.) {
         thetaPri = momentum.theta();
         phiPri = momentum.phi();
         primaryDir = momentum.unit();
+        muonCosTheta = -primaryDir.z();
       }
     }
   }
@@ -154,6 +193,7 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
   fEpri = primaryEnergy;
   fth = thetaPri;
   fph = phiPri;
+  muonEnergySampledGeV = primaryEnergy / GeV;
   fDirX = primaryDir.x();
   fDirY = primaryDir.y();
   fDirZ = primaryDir.z();
@@ -163,6 +203,50 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
     muonXImp = gen->GetMuonXImpact();
     muonYImp = gen->GetMuonYImpact();
     muonZImp = gen->GetMuonZImpact();
+    muonWeight = gen->GetMuonWeight();
+    eventLivetime = gen->GetEventLivetime();
+    muonCosTheta = gen->GetMuonCosTheta();
+    muonEnergySampledGeV = gen->GetMuonEnergySampledGeV();
+    G4String mode = gen->GetMuonModeString();
+    mode.toLower();
+    if (mode == "tierb_plane_flux") {
+      muonModeCode = 1;
+    } else {
+      muonModeCode = 0;
+    }
+    fEdepGeomFlag = gen->GetGeomIntersectsCCD() ? 1.0 : 0.0;
+    fluxModelCode = gen->GetFluxModelCode();
+    cfgSourceZ = gen->GetSourcePlaneZ() / cm;
+    cfgSourceLx = gen->GetSourcePlaneLx() / cm;
+    cfgSourceLy = gen->GetSourcePlaneLy() / cm;
+    cfgThetaMaxDeg = gen->GetThetaMaxDeg();
+    cfgEminEff = gen->GetEffectiveEminGeV();
+    cfgEmaxEff = gen->GetEffectiveEmaxGeV();
+    muonPDGCode = gen->GetMuonPDGCode();
+    muonChargeSign = gen->GetMuonChargeSign();
+    muonChargeRatio = gen->GetMuonChargeRatio();
+  }
+
+  if (const auto* runAction = dynamic_cast<const B02RunAction*>(
+          G4RunManager::GetRunManager()->GetUserRunAction())) {
+    seed1 = static_cast<G4int>(runAction->GetSeed1());
+    seed2 = static_cast<G4int>(runAction->GetSeed2());
+    useTimeSeed = runAction->GetUseTimeSeed() ? 1 : 0;
+    overburdenEnabled = runAction->GetOverburdenEnabled() ? 1 : 0;
+    overburdenThickness = runAction->GetOverburdenThickness() / cm;
+    overburdenZTop = runAction->GetOverburdenZTop() / cm;
+    overburdenMaterialHash =
+        static_cast<G4double>(std::hash<std::string>{}(runAction->GetOverburdenMaterialName()));
+    ccdGammaCut = runAction->GetCCDGammaCut() / cm;
+    ccdElectronCut = runAction->GetCCDElectronCut() / cm;
+    ccdPositronCut = runAction->GetCCDPositronCut() / cm;
+    ccdMaxStep = runAction->GetCCDMaxStep() / cm;
+    ccdThickness = runAction->GetCCDThicknessCached() / cm;
+    gitHashCode = static_cast<G4double>(std::hash<std::string>{}(runAction->GetGitHash()));
+    macroHashCode = static_cast<G4double>(std::hash<std::string>{}(runAction->GetMacroHash()));
+    macroPathHash = static_cast<G4double>(std::hash<std::string>{}(runAction->GetMacroPath()));
+    physicsListHash =
+        static_cast<G4double>(std::hash<std::string>{}(runAction->GetPhysicsListName()));
   }
  
  // accumulated length by muons.
@@ -272,17 +356,51 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
       analysisManager->FillNtupleDColumn(1,15,muonYImp/cm);
       analysisManager->FillNtupleDColumn(1,16,muonZImp/cm);
       analysisManager->FillNtupleDColumn(1,17,fEdepCCDGeV);
-      analysisManager->FillNtupleIColumn(1,18,fNstepsCCD);
-      analysisManager->FillNtupleDColumn(1,19,fEntryCCD.x()/cm);
-      analysisManager->FillNtupleDColumn(1,20,fEntryCCD.y()/cm);
-      analysisManager->FillNtupleDColumn(1,21,fEntryCCD.z()/cm);
-      analysisManager->FillNtupleDColumn(1,22,fExitCCD.x()/cm);
-      analysisManager->FillNtupleDColumn(1,23,fExitCCD.y()/cm);
-      analysisManager->FillNtupleDColumn(1,24,fExitCCD.z()/cm);
-      analysisManager->FillNtupleDColumn(1,25,fTrackLenCCD/cm);
-      analysisManager->FillNtupleDColumn(1,26,fDirX);
-      analysisManager->FillNtupleDColumn(1,27,fDirY);
-      analysisManager->FillNtupleDColumn(1,28,fDirZ);
+      analysisManager->FillNtupleDColumn(1,18,fEdepOtherGeV);
+      analysisManager->FillNtupleIColumn(1,19,fNstepsCCD);
+      analysisManager->FillNtupleDColumn(1,20,fEntryCCD.x()/cm);
+      analysisManager->FillNtupleDColumn(1,21,fEntryCCD.y()/cm);
+      analysisManager->FillNtupleDColumn(1,22,fEntryCCD.z()/cm);
+      analysisManager->FillNtupleDColumn(1,23,fExitCCD.x()/cm);
+      analysisManager->FillNtupleDColumn(1,24,fExitCCD.y()/cm);
+      analysisManager->FillNtupleDColumn(1,25,fExitCCD.z()/cm);
+      analysisManager->FillNtupleDColumn(1,26,fTrackLenCCD/cm);
+      analysisManager->FillNtupleDColumn(1,27,fDirX);
+      analysisManager->FillNtupleDColumn(1,28,fDirY);
+      analysisManager->FillNtupleDColumn(1,29,fDirZ);
+      analysisManager->FillNtupleDColumn(1,30,muonCosTheta);
+      analysisManager->FillNtupleDColumn(1,31,muonWeight);
+      analysisManager->FillNtupleDColumn(1,32,eventLivetime);
+      analysisManager->FillNtupleIColumn(1,33,muonModeCode);
+      analysisManager->FillNtupleDColumn(1,34,muonEnergySampledGeV);
+      analysisManager->FillNtupleIColumn(1,35,fFirstHitIsCCD);
+      analysisManager->FillNtupleDColumn(1,36,fEdepGeomFlag);
+      analysisManager->FillNtupleIColumn(1,37,fluxModelCode);
+      analysisManager->FillNtupleDColumn(1,38,cfgSourceZ);
+      analysisManager->FillNtupleDColumn(1,39,cfgSourceLx);
+      analysisManager->FillNtupleDColumn(1,40,cfgSourceLy);
+      analysisManager->FillNtupleDColumn(1,41,cfgThetaMaxDeg);
+      analysisManager->FillNtupleDColumn(1,42,cfgEminEff);
+      analysisManager->FillNtupleDColumn(1,43,cfgEmaxEff);
+      analysisManager->FillNtupleIColumn(1,44,muonPDGCode);
+      analysisManager->FillNtupleIColumn(1,45,muonChargeSign);
+      analysisManager->FillNtupleIColumn(1,46,seed1);
+      analysisManager->FillNtupleIColumn(1,47,seed2);
+      analysisManager->FillNtupleIColumn(1,48,useTimeSeed);
+      analysisManager->FillNtupleIColumn(1,49,overburdenEnabled);
+      analysisManager->FillNtupleDColumn(1,50,overburdenThickness);
+      analysisManager->FillNtupleDColumn(1,51,overburdenZTop);
+      analysisManager->FillNtupleDColumn(1,52,overburdenMaterialHash);
+      analysisManager->FillNtupleDColumn(1,53,ccdGammaCut);
+      analysisManager->FillNtupleDColumn(1,54,ccdElectronCut);
+      analysisManager->FillNtupleDColumn(1,55,ccdPositronCut);
+      analysisManager->FillNtupleDColumn(1,56,ccdMaxStep);
+      analysisManager->FillNtupleDColumn(1,57,ccdThickness);
+      analysisManager->FillNtupleDColumn(1,58,gitHashCode);
+      analysisManager->FillNtupleDColumn(1,59,macroHashCode);
+      analysisManager->FillNtupleDColumn(1,60,macroPathHash);
+      analysisManager->FillNtupleDColumn(1,61,physicsListHash);
+      analysisManager->FillNtupleDColumn(1,62,muonChargeRatio);
       analysisManager->AddNtupleRow(1);
 
 // analysisManager->FillNtupleDColumn(1,9,fLength/cm);
@@ -296,12 +414,20 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
 void B02EventAction::AddCCDStep(double edepGeV,
                                 const G4ThreeVector& prePos,
                                 const G4ThreeVector& postPos,
-                                G4bool isPrimary)
+                                G4bool isPrimary,
+                                G4bool isCCDVolume)
 {
-  fEdepCCDGeV += edepGeV;
-  fNstepsCCD++;
+  if (isCCDVolume) {
+    fEdepCCDGeV += edepGeV;
+    if (fFirstHitIsCCD == 0 && edepGeV > 0) {
+      fFirstHitIsCCD = 1;
+    }
+  } else {
+    fEdepOtherGeV += edepGeV;
+  }
 
-  if (isPrimary) {
+  if (isPrimary && isCCDVolume) {
+    fNstepsCCD++;
     if (!fHasEntryCCD) {
       fEntryCCD = prePos;
       fHasEntryCCD = true;

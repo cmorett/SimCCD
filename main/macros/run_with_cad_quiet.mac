@@ -1,0 +1,9 @@
+/analysis/setFileName cad_run_oldsample
+/analysis/ntuple/setFileName 0 cad_run_oldsample
+/analysis/ntuple/setFileName 1 cad_run_oldsample
+
+/run/verbose 0
+/event/verbose 0
+/tracking/verbose 0
+/run/initialize
+/run/beamOn 10000

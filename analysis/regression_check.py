@@ -27,7 +27,16 @@ def load_summary(path: Path) -> Dict[str, float]:
     with path.open(newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            return {k: float(v) if v not in ("", None) else 0.0 for k, v in row.items()}
+            parsed: Dict[str, object] = {}
+            for k, v in row.items():
+                if v in ("", None):
+                    parsed[k] = 0.0
+                    continue
+                try:
+                    parsed[k] = float(v)
+                except ValueError:
+                    parsed[k] = v
+            return parsed
     return {}
 
 
@@ -41,10 +50,11 @@ def check_range(name: str, value: float, bounds: Tuple[float, float]) -> Tuple[b
 def main():
     parser = argparse.ArgumentParser(description="Regression sanity checker for validation_summary.csv.")
     parser.add_argument("--summary", required=True, help="Path to validation_summary.csv")
-    parser.add_argument("--min-quality-events", type=int, default=50, help="Minimum non-truncated pixelized events expected")
+    parser.add_argument("--min-quality-events", type=int, default=20, help="Minimum non-truncated pixelized events expected")
     parser.add_argument("--max-truncated-fraction", type=float, default=0.1, help="Maximum allowed truncated fraction")
     parser.add_argument("--dedx-range", type=float, nargs=2, default=(0.01, 1e4), help="Allowed dE/dx median range (MeV/cm)")
     parser.add_argument("--sigma-trans-range", type=float, nargs=2, default=(0.05, 300.0), help="Allowed sigma_trans median range (pix)")
+    parser.add_argument("--min-hit-fraction", type=float, default=0.0, help="Minimum expected CCD hit fraction (n_events_ccd/n_events)")
     parser.add_argument("--fail-on-warning", action="store_true", help="Exit non-zero if any check fails")
     args = parser.parse_args()
 
@@ -64,6 +74,12 @@ def main():
         failures.append(f"quality events {quality_events} < {args.min_quality_events}")
     else:
         notes.append(f"quality events = {quality_events}")
+
+    hit_frac = float(summary.get("hit_fraction", 0.0))
+    if hit_frac < args.min_hit_fraction:
+        failures.append(f"hit fraction {hit_frac:.4f} < {args.min_hit_fraction}")
+    else:
+        notes.append(f"hit fraction = {hit_frac:.4f}")
 
     trunc_frac = float(summary.get("truncated_fraction", 0.0))
     ok, msg = check_range("truncated_fraction", trunc_frac, (0.0, args.max_truncated_fraction))

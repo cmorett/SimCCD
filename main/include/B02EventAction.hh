@@ -24,7 +24,7 @@ public:
     	
     void AddLength(double dl){fLength += dl;};
     void AddEdep(double de){fEnergy += de;};
-    void AddCCDStep(double edepGeV, const G4ThreeVector& prePos, const G4ThreeVector& postPos, G4bool isPrimary);
+    void AddCCDStep(double edepGeV, const G4ThreeVector& prePos, const G4ThreeVector& postPos, G4bool isPrimary, G4bool isCCDVolume);
     //G4double GetTracedLength() const;
     
 private:
@@ -37,6 +37,9 @@ private:
 
     // CCD summary (event-level) for offline pixelization
     double fEdepCCDGeV;
+    double fEdepOtherGeV;
+    double fEdepGeomFlag;  // 1 if predicted impact intersects CCD, else 0
+    int    fFirstHitIsCCD;
     int    fNstepsCCD;
     G4ThreeVector fEntryCCD;
     G4ThreeVector fExitCCD;

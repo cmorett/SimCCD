@@ -9,13 +9,13 @@ NEVENTS=1000000
 CHUNKS=1
 SEED1=12345
 SEED2=67890
-MACRO_BASE="run/run_simccd_1M.mac"
+MACRO_BASE="main/macros/run_tierB_paper_default_1M.mac"
 MAKE_PAPER=0
 
 usage() {
   cat <<EOF
 Usage: $0 [--exe PATH] [--geometry primitive|cad] [--out DIR] [--tag NAME] [--events N] [--chunks N]
-          [--seed1 N] [--seed2 N] [--make-paper-outputs]
+          [--seed1 N] [--seed2 N] [--macro PATH] [--make-paper-outputs]
 
 Defaults: exe=$EXE, geometry=$GEOMETRY, out=$OUT_BASE, events=$NEVENTS, chunks=$CHUNKS
 EOF
@@ -31,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --chunks) CHUNKS="$2"; shift 2;;
     --seed1) SEED1="$2"; shift 2;;
     --seed2) SEED2="$2"; shift 2;;
+    --macro) MACRO_BASE="$2"; shift 2;;
     --make-paper-outputs) MAKE_PAPER=1; shift;;
     -h|--help) usage; exit 0;;
     *) echo "Unknown arg: $1"; usage; exit 1;;
@@ -56,7 +57,14 @@ for ((i=0; i<CHUNKS; ++i)); do
   macro="$OUT_DIR/macro_${chunk_tag}.mac"
   seed1=$((SEED1 + i))
   seed2=$((SEED2 + i))
+  macro_abs=$(python - <<'PY'
+import os,sys
+path=sys.argv[1]
+print(os.path.abspath(path))
+PY
+"$macro")
   cat > "$macro" <<EOF
+/control/execute $MACRO_BASE
 /analysis/setFileName $outfile
 /analysis/ntuple/setFileName 0 $outfile
 /analysis/ntuple/setFileName 1 $outfile
@@ -64,8 +72,10 @@ for ((i=0; i<CHUNKS; ++i)); do
 /runAction/useFixedSeeds true
 /runAction/seed1 $seed1
 /runAction/seed2 $seed2
+/runAction/macroPath $macro_abs
+/runAction/provenanceTag $chunk_tag
 /run/printProgress 10000
-/generator/SmithActivation true
+/generator/muonMode tierB_plane_flux
 /generator/useFixedEnergy false
 /run/initialize
 /run/beamOn $events_per_chunk
@@ -108,6 +118,7 @@ cat > "$OUT_DIR/run_metadata.json" <<EOF
   "events_per_chunk": $events_per_chunk,
   "seed1": $SEED1,
   "seed2": $SEED2,
+  "macro_base": "$MACRO_BASE",
   "output_dir": "$OUT_DIR",
   "merged_file": "$merged"
 }

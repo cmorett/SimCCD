@@ -1,0 +1,24 @@
+# Tier B: cosmic muons on a 20x20 cm source plane for scaling checks.
+
+/analysis/setFileName tierB_run_20cm
+/analysis/ntuple/setFileName 0 tierB_run_20cm
+/analysis/ntuple/setFileName 1 tierB_run_20cm
+
+# Muon generator settings
+/generator/muonMode tierB_plane_flux
+/generator/fluxModel guan2015
+/generator/useFixedEnergy false
+/generator/EminGeV 1.0
+/generator/EmaxGeV 10000
+/generator/thetaMax 80 deg
+/generator/sourcePlaneZ 8 cm
+/generator/sourcePlaneAutoSize false
+/generator/sourcePlaneLx 20 cm
+/generator/sourcePlaneLy 20 cm
+/generator/sourcePlaneMargin 0.0 cm
+
+/runAction/useTimeSeed true
+
+/run/verbose 1
+/run/initialize
+/run/beamOn 10000

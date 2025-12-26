@@ -56,7 +56,7 @@ void B02SteppingAction::UserSteppingAction(const G4Step* aStep)
          return;
        }
        
-      //  G4cout << " YA LOGRÉ DETECTAR LA CCD: " << stepLength/mm << G4endl; 
+      //  G4cout << " YA LOGR+? DETECTAR LA CCD: " << stepLength/mm << G4endl; 
 
 
        const bool isPrimary = (track->GetParentID() == 0);
@@ -68,7 +68,8 @@ void B02SteppingAction::UserSteppingAction(const G4Step* aStep)
 
        const G4ThreeVector prePos = aStep->GetPreStepPoint()->GetPosition();
        const G4ThreeVector postPos = aStep->GetPostStepPoint()->GetPosition();
-       fEventAction->AddCCDStep(edep/GeV, prePos, postPos, isPrimary);
+       const bool isCCDVolume = detectorConstruction->IsCCDScoringVolume(volume);
+       fEventAction->AddCCDStep(edep/GeV, prePos, postPos, isPrimary, isCCDVolume);
        
     // step length associated with the primary muon 
     // if (trackID == 1){

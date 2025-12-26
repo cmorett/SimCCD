@@ -1,0 +1,13 @@
+/control/execute main/macros/run_tierB_paper_default_1M.mac
+/analysis/setFileName main/build/Release/tierB_paper_default_10k.root
+/analysis/ntuple/setFileName 0 main/build/Release/tierB_paper_default_10k.root
+/analysis/ntuple/setFileName 1 main/build/Release/tierB_paper_default_10k.root
+/runAction/useTimeSeed false
+/runAction/useFixedSeeds true
+/runAction/seed1 12345
+/runAction/seed2 67890
+/runAction/macroPath C:\Users\cmore\geant4\g4work\SimCCD_Log_Complete\run\tierB_paper_default_10k.mac
+/runAction/provenanceTag tierB_paper_default_10k
+/run/printProgress 10000
+/run/initialize
+/run/beamOn 10000

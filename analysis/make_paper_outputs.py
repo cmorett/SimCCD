@@ -59,6 +59,10 @@ def arr(tree, name):
     return tree[name].array(library="np")
 
 
+def get_field(events: Dict[str, np.ndarray], name: str, default=None):
+    return events[name] if name in events else default
+
+
 def basic_stats(values: np.ndarray) -> Dict[str, float]:
     vals = np.asarray(values)
     if vals.size == 0:
@@ -471,6 +475,7 @@ def main():
     out_base = Path(args.output) / args.tag
     plots_dir = ensure_dir(out_base)
     tables_dir = ensure_dir(out_base / "tables")
+    warnings: List[str] = []
 
     params = CCDParams(
         pixel_size_microns=args.pixel_size_microns,
@@ -479,9 +484,59 @@ def main():
         max_canvas_pix=args.max_canvas,
     )
 
-    tree = load_tree(input_path)
+    uproot_file = uproot.open(input_path)
+    if "B02Evts" not in uproot_file:
+        raise RuntimeError(f"B02Evts tree missing in {input_path}")
+    tree = uproot_file["B02Evts"]
+    run_info_tree = uproot_file["B02RunInfo"] if "B02RunInfo" in uproot_file else None
     events = {name: arr(tree, name) for name in tree.keys()}
+    run_info = {}
+    if run_info_tree:
+        for name in run_info_tree.keys():
+            values = run_info_tree[name].array(library="np")
+            if values.size == 0:
+                continue
+            val = values[0]
+            if isinstance(val, bytes):
+                val = val.decode("utf-8")
+            if hasattr(val, "item"):
+                val = val.item()
+            run_info[name] = val
+    if not run_info:
+        fallback_map = {
+            "prov_seed1": "seed1",
+            "prov_seed2": "seed2",
+            "prov_useTimeSeed": "useTimeSeed",
+            "prov_overburdenEnabled": "overburdenEnabled",
+            "prov_overburdenThickness_cm": "overburdenThickness_cm",
+            "prov_overburdenZTop_cm": "overburdenZTop_cm",
+            "prov_ccdGammaCut_cm": "ccdGammaCut_cm",
+            "prov_ccdElectronCut_cm": "ccdElectronCut_cm",
+            "prov_ccdPositronCut_cm": "ccdPositronCut_cm",
+            "prov_ccdMaxStep_cm": "ccdMaxStep_cm",
+            "prov_ccdThickness_cm": "ccdThickness_cm",
+            "prov_muonChargeRatio": "muonChargeRatio",
+            "prov_gitHashCode": "gitHashCode",
+            "prov_macroHashCode": "macroHashCode",
+            "prov_macroPathHash": "macroPathHash",
+            "prov_physicsListHash": "physicsListHash",
+        }
+        for src, dst in fallback_map.items():
+            if src in events and len(events[src]) > 0:
+                val = np.asarray(events[src])[0]
+                if hasattr(val, "item"):
+                    val = val.item()
+                run_info[dst] = val
     n_events = len(events["EevtPri"])
+    weights = None
+    if "eventLivetime_s" in events:
+        weights = np.asarray(events["eventLivetime_s"])
+    elif "muonWeight_s" in events:
+        weights = np.asarray(events["muonWeight_s"])
+    total_livetime = float(np.sum(weights)) if weights is not None else 0.0
+    ccd_thickness_cm = float(run_info.get("ccdThickness_cm", params.thickness_microns * 1e-4))
+    lcos_median_val = None
+    lcos_ratio_val = None
 
     # Generator/source plots
     fig, ax = plt.subplots()
@@ -490,7 +545,10 @@ def main():
     fig.savefig(plots_dir / "fig_energy_spectrum.pdf")
     plt.close(fig)
 
-    cos_down = np.clip(-np.cos(events["thetaPri"]), 0.0, 1.0)
+    if "muonCosTheta" in events:
+        cos_down = np.asarray(events["muonCosTheta"])
+    else:
+        cos_down = np.clip(-np.cos(events["thetaPri"]), 0.0, 1.0)
     clamp_low = int(np.sum(-np.cos(events["thetaPri"]) < 0))
     clamp_high = int(np.sum(-np.cos(events["thetaPri"]) > 1))
     fig, ax = plt.subplots()
@@ -505,8 +563,27 @@ def main():
     fig.savefig(plots_dir / "fig_coszenith_down.pdf")
     plt.close(fig)
 
+    muon_pdg = events.get("muonPDG")
+    mu_plus_frac = None
+    mu_ratio_sampled = None
+    if muon_pdg is not None:
+        mu_pdg_arr = np.asarray(muon_pdg)
+        n_mu_plus = float(np.sum(mu_pdg_arr == -13))
+        n_mu_minus = float(np.sum(mu_pdg_arr == 13))
+        total_mu = n_mu_plus + n_mu_minus
+        if total_mu > 0:
+            mu_plus_frac = n_mu_plus / total_mu
+        if n_mu_minus > 0:
+            mu_ratio_sampled = n_mu_plus / n_mu_minus
+        print(f"[charge] N(mu+)={n_mu_plus:.0f}, N(mu-)={n_mu_minus:.0f}, mu+/mu-={mu_ratio_sampled if mu_ratio_sampled is not None else 'nan'}")
+
     fig, ax = plt.subplots()
     make_2d(ax, events["muonXImp"], events["muonYImp"], bins=80, xlabel="x_imp [cm]", ylabel="y_imp [cm]", title="Impact plane")
+    # overlay CCD footprint +/-0.75 cm
+    for x in (-0.75, 0.75):
+        ax.axvline(x, color="red", linestyle="--", linewidth=1)
+    for y in (-0.75, 0.75):
+        ax.axhline(y, color="red", linestyle="--", linewidth=1)
     fig.tight_layout()
     fig.savefig(plots_dir / "fig_xyImpact.pdf")
     plt.close(fig)
@@ -516,6 +593,13 @@ def main():
     fig.tight_layout()
     fig.savefig(plots_dir / "fig_z0.pdf")
     plt.close(fig)
+
+    if "muonX0" in events and "muonY0" in events:
+        fig, ax = plt.subplots()
+        make_2d(ax, events["muonX0"], events["muonY0"], bins=80, xlabel="x0 [cm]", ylabel="y0 [cm]", title="Source plane (x0,y0)")
+        fig.tight_layout()
+        fig.savefig(plots_dir / "fig_xy0.pdf")
+        plt.close(fig)
 
     # CCD summaries
     fig, ax = plt.subplots()
@@ -560,6 +644,32 @@ def main():
     fig.savefig(plots_dir / "fig_costheta_vs_trackLen.pdf")
     plt.close(fig)
 
+    # L*cos(theta) sanity check vs CCD thickness
+    if ccd_thickness_cm > 0.0:
+        lcos = np.asarray(events["trackLenCCD"]) * np.abs(cos_down)
+        lcos = lcos[lcos > 0]
+        if lcos.size:
+            lcos_median = float(np.median(lcos))
+            lcos_ratio = lcos_median / ccd_thickness_cm if ccd_thickness_cm > 0 else 0.0
+            lcos_median_val = lcos_median
+            lcos_ratio_val = lcos_ratio
+            fig, ax = plt.subplots()
+            ax.hist(lcos, bins=80, histtype="step", lw=2)
+            ax.axvline(ccd_thickness_cm, color="red", linestyle="--", label="CCD thickness")
+            ax.set_xlabel("trackLen * |cos(theta)| [cm]")
+            ax.set_ylabel("Events")
+            ax.set_title("L*cos(theta) vs CCD thickness")
+            ax.legend()
+            fig.tight_layout()
+            fig.savefig(plots_dir / "fig_Lcos_vs_thickness.pdf")
+            plt.close(fig)
+            if lcos_ratio < 0.5 or lcos_ratio > 1.5:
+                warnings.append(
+                    f"L*cos(theta) median {lcos_median:.4f} cm deviates from CCD thickness {ccd_thickness_cm:.4f} cm"
+                )
+        else:
+            warnings.append("No valid track lengths to compute L*cos(theta).")
+
     # dE/dx (geometry-level)
     dedx_all = dedx_mev_per_cm(events["EdepCCD"], events["trackLenCCD"])
     dedx_mask = events["trackLenCCD"] > 0.01
@@ -596,11 +706,34 @@ def main():
         fig.savefig(plots_dir / "fig_dEdx_tail.pdf")
         plt.close(fig)
 
+        if dedx_p[50] < 0.5 or dedx_p[50] > 10.0:
+            warnings.append(f"dE/dx median {dedx_p[50]:.2f} MeV/cm outside expected muon range (0.5-10).")
+
     # Pixelization
     valid_mask = (events["EdepCCD"] > 0) & (events["trackLenCCD"] > 0)
     valid_idxs = np.nonzero(valid_mask)[0]
     metrics_all: List[Dict[str, float]] = []
     metrics_quality: List[Dict[str, float]] = []
+    hit_fraction = float(valid_mask.sum()) / float(n_events) if n_events else 0.0
+    hit_rate_hz = float(valid_mask.sum()) / total_livetime if total_livetime > 0 else 0.0
+    geom_intersect_fraction = None
+    if "geomIntersectsCCD" in events:
+        geom_mask = np.asarray(events["geomIntersectsCCD"]) > 0.5
+        geom_intersect_fraction = float(np.sum(geom_mask)) / float(n_events) if n_events else 0.0
+    cfg_emin = events.get("cfg_EminGeV_eff")
+    cfg_emax = events.get("cfg_EmaxGeV_eff")
+    cfg_theta = events.get("cfg_thetaMax_deg")
+    cfg_plane = (
+        events.get("cfg_sourcePlaneZ_cm"),
+        events.get("cfg_sourcePlaneLx_cm"),
+        events.get("cfg_sourcePlaneLy_cm"),
+    )
+    if total_livetime > 0.0:
+        print(f"Hit fraction={hit_fraction:.4f}, livetime={total_livetime:.2f} s, CCD hit rate={hit_rate_hz:.3f} Hz")
+    else:
+        print(f"Hit fraction={hit_fraction:.4f}")
+    if cfg_emin is not None and cfg_emax is not None:
+        print(f"Effective energy range: Emin={float(np.mean(cfg_emin)):.3g} GeV, Emax={float(np.mean(cfg_emax)):.3g} GeV")
     if valid_idxs.size == 0:
         print("WARNING: No events with CCD deposits; skipping pixelization outputs.")
     else:
@@ -637,16 +770,79 @@ def main():
         "truncated_fraction": float(truncated_count / len(metrics_all)) if metrics_all else 0.0,
         "cos_clamp_low": clamp_low,
         "cos_clamp_high": clamp_high,
+        "hit_fraction": hit_fraction,
+        "total_livetime_s": total_livetime,
+        "hit_rate_hz": hit_rate_hz,
     }
+    if weights is not None and weights.size > 0:
+        validation_summary["event_weight_mean_s"] = float(np.mean(weights))
+    if geom_intersect_fraction is not None:
+        validation_summary["geom_intersect_fraction"] = geom_intersect_fraction
+    if cfg_emin is not None:
+        validation_summary["cfg_EminGeV_eff"] = float(np.mean(cfg_emin))
+    if cfg_emax is not None:
+        validation_summary["cfg_EmaxGeV_eff"] = float(np.mean(cfg_emax))
+    if cfg_theta is not None:
+        validation_summary["cfg_thetaMax_deg"] = float(np.mean(cfg_theta))
+    if cfg_plane[0] is not None:
+        validation_summary["cfg_sourcePlaneZ_cm"] = float(np.mean(cfg_plane[0]))
+    if cfg_plane[1] is not None:
+        validation_summary["cfg_sourcePlaneLx_cm"] = float(np.mean(cfg_plane[1]))
+    if cfg_plane[2] is not None:
+        validation_summary["cfg_sourcePlaneLy_cm"] = float(np.mean(cfg_plane[2]))
     validation_summary.update({f"energy_{k}": v for k, v in basic_stats(events["EevtPri"]).items()})
     validation_summary.update({f"EdepCCD_{k}": v for k, v in basic_stats(events["EdepCCD"]).items()})
     validation_summary.update({f"trackLenCCD_{k}": v for k, v in basic_stats(events["trackLenCCD"]).items()})
     validation_summary["impact_uniformity"] = impact_uniformity_stat(events["muonXImp"], events["muonYImp"])
+    if "EdepOther" in events:
+        validation_summary.update({f"EdepOther_{k}": v for k, v in basic_stats(events["EdepOther"]).items()})
+    if "muonModeCode" in events and len(events["muonModeCode"]) > 0:
+        validation_summary["muonModeCode"] = int(np.median(np.asarray(events["muonModeCode"])))
     if dedx_all.size:
         validation_summary.update({f"dEdx_{k}": v for k, v in basic_stats(dedx_all).items()})
+    if mu_plus_frac is not None:
+        validation_summary["mu_plus_fraction"] = float(mu_plus_frac)
+    if mu_ratio_sampled is not None:
+        validation_summary["mu_plus_to_minus_sampled"] = float(mu_ratio_sampled)
+    if lcos_median_val is not None:
+        validation_summary["Lcos_median_cm"] = float(lcos_median_val)
+    if lcos_ratio_val is not None:
+        validation_summary["Lcos_ratio_to_thickness"] = float(lcos_ratio_val)
     if metrics_quality:
         validation_summary.update({f"sigma_trans_{k}": v for k, v in basic_stats(np.asarray([m["sigma_trans"] for m in metrics_quality])).items()})
         validation_summary.update({f"length_pix_geom_{k}": v for k, v in basic_stats(np.asarray([m["length_pix_geom"] for m in metrics_quality])).items()})
+    if warnings:
+        validation_summary["warnings"] = "; ".join(warnings)
+    for k in [
+        "gitHash",
+        "gitDirty",
+        "macroPath",
+        "macroHash",
+        "provenanceTag",
+        "physicsList",
+        "useTimeSeed",
+        "seed1",
+        "seed2",
+        "muonMode",
+        "fluxModel",
+        "muonChargeMode",
+        "muonChargeRatio",
+        "overburdenEnabled",
+        "overburdenThickness_cm",
+        "overburdenZTop_cm",
+        "overburdenMaterial",
+        "ccdGammaCut_cm",
+        "ccdElectronCut_cm",
+        "ccdPositronCut_cm",
+        "ccdMaxStep_cm",
+        "ccdThickness_cm",
+        "gitHashCode",
+        "macroHashCode",
+        "macroPathHash",
+        "physicsListHash",
+    ]:
+        if k in run_info:
+            validation_summary[k] = run_info[k]
     write_csv(tables_dir / "validation_summary.csv", [validation_summary])
 
     if metrics_all:
@@ -656,23 +852,30 @@ def main():
 
     write_units_file(tables_dir / "units_and_conventions.txt", params)
 
+    if warnings:
+        print("[WARN] The following validation warnings were raised:")
+        for w in warnings:
+            print(f"  - {w}")
+        if args.fail_on_warning:
+            raise SystemExit("fail_on_warning set and warnings present.")
+
     # Save config
-    save_json(
-        {
-            "input": str(input_path),
-            "output": str(out_base),
-            "examples": args.examples,
-            "dist_events": args.dist_events,
-            "seed": args.seed,
-            "quality_only": args.quality_only,
-            "canvas_mode": args.canvas_mode,
-            "canvas_size": args.canvas_size,
-            "margin_pix": args.margin_pix,
-            "fail_on_warning": args.fail_on_warning,
-            "ccd_params": vars(params),
-        },
-        out_base / "run_config.json",
-    )
+    config_payload = {
+        "input": str(input_path),
+        "output": str(out_base),
+        "examples": args.examples,
+        "dist_events": args.dist_events,
+        "seed": args.seed,
+        "quality_only": args.quality_only,
+        "canvas_mode": args.canvas_mode,
+        "canvas_size": args.canvas_size,
+        "margin_pix": args.margin_pix,
+        "fail_on_warning": args.fail_on_warning,
+        "ccd_params": vars(params),
+    }
+    if run_info:
+        config_payload["run_info"] = run_info
+    save_json(config_payload, out_base / "run_config.json")
 
 
 if __name__ == "__main__":

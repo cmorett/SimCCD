@@ -1,0 +1,30 @@
+# Tier B paper default configuration (no /run/beamOn here).
+# This macro sets generator + detector knobs; the driving script should set
+# analysis filenames, seeds, /run/initialize, and /run/beamOn.
+
+# Muon generator (Tier B plane flux, Modified Gaisser / Guan 2015)
+/generator/muonMode tierB_plane_flux
+/generator/fluxModel guan2015
+/generator/useFixedEnergy false
+/generator/EminGeV 1.0
+/generator/EmaxGeV 10000
+/generator/thetaMax 80 deg
+/generator/sourcePlaneZ 8 cm
+/generator/sourcePlaneAutoSize false
+/generator/sourcePlaneLx 10 cm
+/generator/sourcePlaneLy 10 cm
+/generator/sourcePlaneMargin 0 cm
+/generator/muonChargeMode fixedRatio
+/generator/muonPlusToMinusRatio 1.25
+
+# Optional overburden slab above the source plane (disabled by default)
+/sim/overburden/enable false
+/sim/overburden/thickness 0 cm
+/sim/overburden/zTop 8 cm
+/sim/overburden/material G4_CONCRETE
+
+# CCD region controls (disabled by default)
+/sim/cuts/ccdGammaCut 0 cm
+/sim/cuts/ccdElectronCut 0 cm
+/sim/cuts/ccdPositronCut 0 cm
+/sim/ccd/maxStep 0 cm
