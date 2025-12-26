@@ -134,6 +134,8 @@ B02DetectorConstruction::B02DetectorConstruction(GeometryOptions opts)
   fCCDMessenger = new G4GenericMessenger(this, "/sim/ccd/", "CCD-specific controls");
   fCCDMessenger->DeclarePropertyWithUnit("maxStep", "cm", fCCDMaxStep,
                                          "Optional step limit inside the CCD scoring slab (0 disables).");
+  fCCDMessenger->DeclareProperty("printInfo", fCCDPrintInfo,
+                                 "Print CCD thickness and bounding box at initialization.");
 }
 
 B02DetectorConstruction::~B02DetectorConstruction() {
@@ -166,6 +168,9 @@ G4VPhysicalVolume* B02DetectorConstruction::Construct() {
   BuildOverburden();
   BuildCCDOverlay();
   ConfigureCCDRegion();
+  if (fCCDPrintInfo) {
+    PrintCCDInfo();
+  }
   return fWorldPhysical;
 }
 
@@ -189,7 +194,7 @@ G4LogicalVolume* B02DetectorConstruction::BuildPrimitiveGeometry() {
 
   constexpr G4double halfX = 25.0 * mm;
   constexpr G4double halfY = 25.0 * mm;
-  constexpr G4double halfZ = 0.5 * mm;
+  constexpr G4double halfZ = 0.3625 * mm;
 
   auto* solid = new G4Box("PrimitiveSensor", halfX, halfY, halfZ);
   auto* logical = new G4LogicalVolume(solid, si, "PrimitiveSensorLogical");
@@ -382,7 +387,7 @@ void B02DetectorConstruction::BuildCCDOverlay() {
 
   const G4double halfX = 0.75 * cm;
   const G4double halfY = 0.75 * cm;
-  const G4double halfZ = 0.025 * cm;  // 0.5 mm total thickness
+  const G4double halfZ = 0.3625 * mm;  // 0.725 mm total thickness
 
   auto* solid = new G4Box("CCDOverlay", halfX, halfY, halfZ);
   fCCDOverlayLogical = new G4LogicalVolume(solid, si, "CCDOverlayLogical");
@@ -541,13 +546,51 @@ bool B02DetectorConstruction::IsCCDScoringVolume(const G4LogicalVolume* volume) 
 }
 
 G4double B02DetectorConstruction::GetCCDThickness() const {
-  if (!fCCDOverlayLogical) {
+  auto thickness_from = [](const G4LogicalVolume* lv) -> G4double {
+    if (!lv) {
+      return 0.0;
+    }
+    if (const auto* box = dynamic_cast<const G4Box*>(lv->GetSolid())) {
+      return 2.0 * box->GetZHalfLength();
+    }
     return 0.0;
+  };
+  if (fCCDOverlayLogical) {
+    return thickness_from(fCCDOverlayLogical);
   }
-  if (const auto* box = dynamic_cast<const G4Box*>(fCCDOverlayLogical->GetSolid())) {
-    return 2.0 * box->GetZHalfLength();
+  return thickness_from(fPrimaryScoring);
+}
+
+void B02DetectorConstruction::PrintCCDInfo() const {
+  auto print_box = [](const G4LogicalVolume* lv, const char* label) {
+    if (!lv) {
+      return;
+    }
+    const auto* solid = lv->GetSolid();
+    if (!solid) {
+      return;
+    }
+    const auto* box = dynamic_cast<const G4Box*>(solid);
+    if (box) {
+      const auto full_x = 2.0 * box->GetXHalfLength();
+      const auto full_y = 2.0 * box->GetYHalfLength();
+      const auto full_z = 2.0 * box->GetZHalfLength();
+      G4cout << "[CCD] " << label << " solid=" << solid->GetName()
+             << " size=(" << full_x / mm << ", " << full_y / mm << ", " << full_z / mm
+             << ") mm thickness=" << full_z / mm << " mm" << G4endl;
+    } else {
+      G4cout << "[CCD] " << label << " solid=" << solid->GetName()
+             << " (non-box, thickness unavailable)" << G4endl;
+    }
+  };
+
+  G4cout << "[CCD] geometryMode=" << fOptions.geometryMode << G4endl;
+  if (fPrimaryScoring) {
+    print_box(fPrimaryScoring, "primary");
   }
-  return 0.0;
+  if (fCCDOverlayLogical) {
+    print_box(fCCDOverlayLogical, "overlay");
+  }
 }
 
 void B02DetectorConstruction::ConfigureCCDRegion() {

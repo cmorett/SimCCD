@@ -242,6 +242,12 @@ void B02RunAction::BeginOfRunAction(const G4Run* aRun)
       G4cout << "### Random seeds (unchanged): " << current[0] << " " << current[1] << G4endl;
     }
   }
+  if (const auto* detector = dynamic_cast<const B02DetectorConstruction*>(
+          G4RunManager::GetRunManager()->GetUserDetectorConstruction())) {
+    if (detector->GetCCDPrintInfo()) {
+      detector->PrintCCDInfo();
+    }
+  }
 
   //inform the runManager to save random number seed
   G4RunManager::GetRunManager()->SetRandomNumberStore(true);

@@ -28,3 +28,4 @@
 /sim/cuts/ccdElectronCut 0 cm
 /sim/cuts/ccdPositronCut 0 cm
 /sim/ccd/maxStep 0 cm
+/sim/ccd/printInfo true

@@ -52,6 +52,8 @@ class B02DetectorConstruction : public G4VUserDetectorConstruction
     G4double GetCCDPositronCut() const { return fCCDPositronCut; }
     G4double GetCCDMaxStep() const { return fCCDMaxStep; }
     G4double GetCCDThickness() const;
+    G4bool GetCCDPrintInfo() const { return fCCDPrintInfo; }
+    void PrintCCDInfo() const;
 
   private:
     void DefineMaterials();
@@ -86,6 +88,7 @@ class B02DetectorConstruction : public G4VUserDetectorConstruction
     G4double fCCDElectronCut = 0.0;
     G4double fCCDPositronCut = 0.0;
     G4double fCCDMaxStep = 0.0;
+    G4bool fCCDPrintInfo = false;
     B02BarSD* fBarSD = nullptr;
 };
 

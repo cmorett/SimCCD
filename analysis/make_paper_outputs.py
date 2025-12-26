@@ -758,15 +758,15 @@ def main():
     fig.savefig(plots_dir / "validate_energy_hits_logy.pdf")
     plt.close(fig)
 
+    zoom_bins = np.linspace(1.0, 50.0, 121)
     fig, ax = plt.subplots()
     make_hist1d(
         ax,
         [(energy_pri, "All thrown"), (energy_hits, "CCD hits")],
-        bins=80,
+        bins=zoom_bins,
         xlabel="E_{#mu} [GeV]",
         title="Primary energy (zoom)",
     )
-    ax.set_xlim(1.0, 50.0)
     fig.tight_layout()
     fig.savefig(plots_dir / "validate_energy_hits_zoom.pdf")
     plt.close(fig)
@@ -940,6 +940,29 @@ def main():
                 )
         else:
             warnings.append("No valid track lengths to compute L*cos(theta).")
+
+    track_len_hit = track_len_ccd[mask_hit]
+    track_len_min_cm = float(np.min(track_len_hit)) if track_len_hit.size else 0.0
+    vert_mask = mask_hit & (cos_down > 0.97)
+    track_len_vert = track_len_ccd[vert_mask]
+    track_len_vert_median = float(np.median(track_len_vert)) if track_len_vert.size else 0.0
+    track_len_vert_peak = 0.0
+    if track_len_vert.size > 0:
+        hi = max(np.percentile(track_len_vert, 99.5), ccd_thickness_cm * 1.5 if ccd_thickness_cm > 0 else 0.1)
+        bins = np.linspace(0.0, hi, 80)
+        counts, edges = np.histogram(track_len_vert, bins=bins)
+        if np.any(counts):
+            peak_idx = int(np.argmax(counts))
+            track_len_vert_peak = float(0.5 * (edges[peak_idx] + edges[peak_idx + 1]))
+    if ccd_thickness_cm > 0.0 and track_len_vert_peak > 0.0:
+        rel_diff = abs(track_len_vert_peak - ccd_thickness_cm) / ccd_thickness_cm
+        if rel_diff > 0.2:
+            warn_msg = (
+                f"[diag] vertical trackLen peak {track_len_vert_peak:.4f} cm vs thickness "
+                f"{ccd_thickness_cm:.4f} cm (rel diff {rel_diff:.2f})"
+            )
+            print(warn_msg)
+            warnings.append(warn_msg)
 
     # dE/dx (geometry-level, hits only)
     dedx_all = dedx_mev_per_cm(edep_ccd[mask_hit], track_len_ccd[mask_hit])
@@ -1154,6 +1177,10 @@ def main():
     validation_summary.update({f"energy_{k}": v for k, v in basic_stats(events["EevtPri"]).items()})
     validation_summary.update({f"EdepCCD_{k}": v for k, v in basic_stats(events["EdepCCD"]).items()})
     validation_summary.update({f"trackLenCCD_{k}": v for k, v in basic_stats(events["trackLenCCD"]).items()})
+    validation_summary["trackLenCCD_min_hits_cm"] = track_len_min_cm
+    validation_summary["trackLenCCD_vert_median_cm"] = track_len_vert_median
+    validation_summary["trackLenCCD_vert_peak_cm"] = track_len_vert_peak
+    validation_summary["trackLenCCD_vert_count"] = int(track_len_vert.size)
     if l2d_expected_cm.size:
         validation_summary.update(
             {f"L2D_expected_hits_{k}": v for k, v in basic_stats(l2d_expected_cm[mask_hit]).items()}

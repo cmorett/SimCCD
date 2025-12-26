@@ -31,7 +31,7 @@ Sampling accounts for the projected rate through a horizontal plane: the joint d
 
 - Overburden slab (optional): `/sim/overburden/enable true|false`, `/sim/overburden/thickness <value> <unit>`, `/sim/overburden/zTop <value> <unit>`, `/sim/overburden/material <G4_NAME>`. Default is disabled. The slab sits below `zTop` (top surface), so a muon generated on the source plane at `zTop` immediately traverses the thickness.
 - Muon charge control: `/generator/muonChargeMode equal|fixedRatio|plusOnly|minusOnly` and `/generator/muonPlusToMinusRatio <r>` (default 1.25). Event ntuple stores `muonPDG` and `muonChargeSign`.
-- CCD region controls: `/sim/cuts/ccdGammaCut`, `/sim/cuts/ccdElectronCut`, `/sim/cuts/ccdPositronCut`, and `/sim/ccd/maxStep` (0 disables). CCD thickness is 0.05 cm by default.
+- CCD region controls: `/sim/cuts/ccdGammaCut`, `/sim/cuts/ccdElectronCut`, `/sim/cuts/ccdPositronCut`, and `/sim/ccd/maxStep` (0 disables). CCD thickness is 0.0725 cm (725 um) by default; `/sim/ccd/printInfo true` prints the bounding box at init.
 
 ## Provenance / reproducibility
 
