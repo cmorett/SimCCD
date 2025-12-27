@@ -27,6 +27,11 @@ enum class MuonMode {
   TierBPlaneFlux,
 };
 
+enum class MuonImpactMode {
+  Unbiased,
+  Targeted,
+};
+
 enum class MuonChargeMode {
   Equal,
   FixedRatio,
@@ -41,6 +46,15 @@ MuonMode ParseMuonMode(const G4String& value) {
     return MuonMode::TierBPlaneFlux;
   }
   return MuonMode::ForcedFootprint;
+}
+
+MuonImpactMode ParseMuonImpactMode(const G4String& value) {
+  G4String lower = value;
+  lower.toLower();
+  if (lower == "targeted" || lower == "target") {
+    return MuonImpactMode::Targeted;
+  }
+  return MuonImpactMode::Unbiased;
 }
 
 MuonChargeMode ParseChargeMode(const G4String& value) {
@@ -69,6 +83,16 @@ G4String ToString(MuonChargeMode mode) {
     case MuonChargeMode::Equal:
     default:
       return "equal";
+  }
+}
+
+G4String ToString(MuonImpactMode mode) {
+  switch (mode) {
+    case MuonImpactMode::Targeted:
+      return "targeted";
+    case MuonImpactMode::Unbiased:
+    default:
+      return "unbiased";
   }
 }
 
@@ -110,6 +134,7 @@ B02PrimaryGeneratorAction::B02PrimaryGeneratorAction(
 
   DefineCommands();
   fMuonModeString = ToString(MuonMode::ForcedFootprint);
+  fMuonImpactModeString = ToString(MuonImpactMode::Unbiased);
   fRequestedEminGeV = fEminGeV;
   fRequestedEmaxGeV = fEmaxGeV;
   fEffectiveEminGeV = fEminGeV;
@@ -123,6 +148,7 @@ B02PrimaryGeneratorAction::~B02PrimaryGeneratorAction() {
   delete particleGun;
   delete gunMessenger;
   delete fMessenger;
+  delete fMuonMessenger;
 }
 
 //....oooOO0OOooo........oooOO0OOooo........oooOO0OOooo........oooOO0OOooo......
@@ -135,6 +161,7 @@ void B02PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent) {
   fSampledEnergyGeV = fMuonEnergyGeV;
   fMuonCosTheta = 1.0;
   fGeomIntersectsCCD = false;
+  fMuonIsTargeted = false;
 
   if (fUseCosmicMuons) {
     const MuonMode mode = ParseMuonMode(fMuonModeString);
@@ -282,19 +309,34 @@ void B02PrimaryGeneratorAction::GenerateTierBFlux(G4Event* anEvent) {
   const double sinTheta = std::sqrt(std::max(0.0, 1.0 - cosTheta * cosTheta));
   const double phi = G4RandFlat::shoot(0.0, twopi);
 
-  const G4double x0 = G4RandFlat::shoot(-0.5 * planeLx, 0.5 * planeLx);
-  const G4double y0 = G4RandFlat::shoot(-0.5 * planeLy, 0.5 * planeLy);
   const G4double z0 = fSourcePlaneZ;
 
   const G4ThreeVector dir(sinTheta * std::cos(phi),
                           sinTheta * std::sin(phi),
                           -cosTheta);
-  const G4double deltaZ = z0 - fZImpactPlane;
-  const G4double tToImpact =
-      (std::abs(dir.z()) > 0.0) ? deltaZ / (-dir.z()) : 0.0;
-  const G4double xImp = x0 + tToImpact * dir.x();
-  const G4double yImp = y0 + tToImpact * dir.y();
   const G4double zImp = fZImpactPlane;
+  const G4double tToImpact =
+      (std::abs(dir.z()) > 0.0) ? (zImp - z0) / dir.z() : 0.0;
+
+  const MuonImpactMode impactMode = ParseMuonImpactMode(fMuonImpactModeString);
+  fMuonIsTargeted = (impactMode == MuonImpactMode::Targeted);
+  G4double x0 = 0.0;
+  G4double y0 = 0.0;
+  G4double xImp = 0.0;
+  G4double yImp = 0.0;
+  if (fMuonIsTargeted) {
+    const G4double halfTargetX = 0.5 * px * cm + fTargetMargin;
+    const G4double halfTargetY = 0.5 * py * cm + fTargetMargin;
+    xImp = G4RandFlat::shoot(-halfTargetX, halfTargetX);
+    yImp = G4RandFlat::shoot(-halfTargetY, halfTargetY);
+    x0 = xImp - tToImpact * dir.x();
+    y0 = yImp - tToImpact * dir.y();
+  } else {
+    x0 = G4RandFlat::shoot(-0.5 * planeLx, 0.5 * planeLx);
+    y0 = G4RandFlat::shoot(-0.5 * planeLy, 0.5 * planeLy);
+    xImp = x0 + tToImpact * dir.x();
+    yImp = y0 + tToImpact * dir.y();
+  }
 
   fMuonX0 = x0;
   fMuonY0 = y0;
@@ -316,7 +358,7 @@ void B02PrimaryGeneratorAction::GenerateTierBFlux(G4Event* anEvent) {
   particleGun->SetParticleEnergy(kineticEnergy);
   particleGun->GeneratePrimaryVertex(anEvent);
 
-  if (fUseFixedEnergy) {
+  if (fUseFixedEnergy || fMuonIsTargeted) {
     fEventWeight = 0.0;
     fEventLivetime = 0.0;
   } else {
@@ -422,6 +464,10 @@ void B02PrimaryGeneratorAction::SetMuonMode(const G4String& mode) {
   fMuonModeString = mode;
 }
 
+void B02PrimaryGeneratorAction::SetMuonImpactMode(const G4String& mode) {
+  fMuonImpactModeString = ToString(ParseMuonImpactMode(mode));
+}
+
 void B02PrimaryGeneratorAction::SetFluxModel(const G4String& model) {
   fFluxModel = FluxModelFromString(model);
   MarkSamplerDirty();
@@ -450,6 +496,10 @@ void B02PrimaryGeneratorAction::SetSourcePlaneAutoSize(G4bool value) {
 void B02PrimaryGeneratorAction::SetSourcePlaneMargin(G4double value) {
   fSourcePlaneMargin = std::max(0.0, value);
   MarkSamplerDirty();
+}
+
+void B02PrimaryGeneratorAction::SetTargetMargin(G4double value) {
+  fTargetMargin = std::max(0.0, value);
 }
 
 void B02PrimaryGeneratorAction::SetEminGeV(G4double value) {
@@ -490,6 +540,14 @@ void B02PrimaryGeneratorAction::DefineCommands() {
   // Define /generator command directory using generic messenger class
   fMessenger = new G4GenericMessenger(this, "/generator/",
                                       "Primary generator control");
+
+  fMuonMessenger = new G4GenericMessenger(this, "/sim/muon/",
+                                          "Muon sampling controls");
+  fMuonMessenger->DeclareMethod("mode", &B02PrimaryGeneratorAction::SetMuonImpactMode,
+                                "Impact sampling mode: unbiased or targeted");
+  fMuonMessenger->DeclareMethodWithUnit(
+      "targetMargin", "cm", &B02PrimaryGeneratorAction::SetTargetMargin,
+      "Additional margin around the CCD footprint when sampling targeted impact points.");
 
   fMessenger->DeclareProperty("radius", R, "Radius of the hemisphere (cm).");
   fMessenger->DeclareProperty("px", px,

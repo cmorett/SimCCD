@@ -18,13 +18,29 @@ mkdir outputs\paper_v1_50k
 main\build\Release\b02_executable.exe --geometry primitive --no-vis run\paper_v1_driver_50k.mac
 ```
 
+## Geant4 run (paper_v1_200k)
+Macro used:
+- Base macro: `main/macros/run_tierB_paper_default_1M.mac`
+- Driver macro: `run/paper_v1_driver_200k.mac`
+
+Command line:
+```
+mkdir outputs\paper_v1_200k
+main\build\Release\b02_executable.exe --geometry primitive --no-vis run\paper_v1_driver_200k.mac
+```
+
 ## Analysis (paper outputs)
 ```
 python analysis/make_paper_outputs.py --input outputs/paper_v1_50k/B02ntuples_paper_v1_50k.root --output paper_outputs --tag paper_v1_50k --examples 24 --dist-events 50000 --pixel-size-microns 15 --thickness-microns 725 --canvas-mode adaptive --margin-pix 24 --quality-only
 ```
 
+```
+python analysis/make_paper_outputs.py --input outputs/paper_v1_200k/B02ntuples_paper_v1_200k.root --output paper_outputs --tag paper_v1_200k --examples 24 --dist-events 50000 --pixel-size-microns 15 --thickness-microns 725 --canvas-mode adaptive --margin-pix 24 --quality-only --min-charge-e 1e4
+```
+
 ## Outputs
 - Figures/tables live under `paper_outputs/paper_v1_50k/`.
+- Figures/tables live under `paper_outputs/paper_v1_200k/`.
 
 ## Environment notes
 - Geant4: 11.3.2 (from run log).

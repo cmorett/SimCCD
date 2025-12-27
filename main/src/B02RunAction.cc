@@ -171,6 +171,7 @@ void B02RunAction::BuildAnalysis() {
     analysisManager->CreateNtupleDColumn("prov_macroPathHash"); // 60
     analysisManager->CreateNtupleDColumn("prov_physicsListHash"); // 61
     analysisManager->CreateNtupleDColumn("prov_muonChargeRatio"); // 62
+    analysisManager->CreateNtupleIColumn("isTargeted");        // 63
     analysisManager->FinishNtuple();
 
     // Ntuple 2: run-level provenance

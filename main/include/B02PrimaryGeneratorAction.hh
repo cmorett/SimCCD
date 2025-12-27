@@ -40,6 +40,8 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
     G4double GetMuonWeight() const { return fEventWeight; }
     G4double GetEventLivetime() const { return fEventLivetime; }
     G4String GetMuonModeString() const { return fMuonModeString; }
+    G4String GetMuonImpactModeString() const { return fMuonImpactModeString; }
+    G4bool GetIsTargeted() const { return fMuonIsTargeted; }
     G4double GetMuonCosTheta() const { return fMuonCosTheta; }
     G4double GetMuonEnergySampledGeV() const { return fSampledEnergyGeV; }
     G4double GetEffectiveEminGeV() const { return fEffectiveEminGeV; }
@@ -59,12 +61,14 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
 
     // Command handlers (invoked via the generic messenger)
     void SetMuonMode(const G4String& mode);
+    void SetMuonImpactMode(const G4String& mode);
     void SetFluxModel(const G4String& model);
     void SetSourcePlaneZ(G4double value);
     void SetSourcePlaneLx(G4double value);
     void SetSourcePlaneLy(G4double value);
     void SetSourcePlaneAutoSize(G4bool value);
     void SetSourcePlaneMargin(G4double value);
+    void SetTargetMargin(G4double value);
     void SetEminGeV(G4double value);
     void SetEmaxGeV(G4double value);
     void SetMuonChargeMode(const G4String& mode);
@@ -78,7 +82,8 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
     std::pair<G4double, G4double> ComputeSourcePlaneSize() const;
     void EnsureSamplerReady();
     void MarkSamplerDirty();
-    G4GenericMessenger* fMessenger = nullptr; 
+    G4GenericMessenger* fMessenger = nullptr;
+    G4GenericMessenger* fMuonMessenger = nullptr;
     G4ThreeVector fParticlePosition;
     G4ParticleGun* particleGun;
     G4GeneralParticleSource* fParticleSource;
@@ -105,12 +110,14 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
     G4double fThetaMaxRad = 85.*deg;
     G4bool fUseCosmicMuons = true;
     G4String fMuonModeString = "forced_footprint";
+    G4String fMuonImpactModeString = "unbiased";
     MuonFluxModelType fFluxModel = MuonFluxModelType::Guan2015;
     G4double fSourcePlaneZ = 8.0 * cm;
     G4double fSourcePlaneLx = 10.0 * cm;
     G4double fSourcePlaneLy = 10.0 * cm;
     G4bool fSourcePlaneAutoSize = false;
     G4double fSourcePlaneMargin = 1.0 * cm;
+    G4double fTargetMargin = 0.0 * cm;
     G4double fRequestedEminGeV = 1.0;
     G4double fRequestedEmaxGeV = 1.0e4;
     G4double fEffectiveEminGeV = 1.0;
@@ -138,6 +145,7 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
     G4double fEventWeight = 0.0;    // seconds represented by a single event
     G4double fEventLivetime = 0.0;  // identical to weight for now
     G4bool fGeomIntersectsCCD = false;
+    G4bool fMuonIsTargeted = false;
 
     MuonFluxSampler fFluxSampler;
     bool fSamplerDirty = true;

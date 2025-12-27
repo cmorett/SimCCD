@@ -1,0 +1,20 @@
+# Targeted Tier-B muon sampling (biased) for morphology studies.
+/control/execute main/macros/run_tierB_paper_default_1M.mac
+
+/sim/muon/mode targeted
+/sim/muon/targetMargin 0 cm
+
+/analysis/setFileName outputs/targeted_10k/B02ntuples_targeted_10k.root
+/analysis/ntuple/setFileName 0 outputs/targeted_10k/B02ntuples_targeted_10k.root
+/analysis/ntuple/setFileName 1 outputs/targeted_10k/B02ntuples_targeted_10k.root
+
+/runAction/useTimeSeed false
+/runAction/useFixedSeeds true
+/runAction/seed1 12345
+/runAction/seed2 67890
+/runAction/macroPath run/run_tierB_targeted_10k.mac
+/runAction/provenanceTag tierB_targeted_10k
+/run/printProgress 1000
+
+/run/initialize
+/run/beamOn 10000

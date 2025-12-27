@@ -47,6 +47,10 @@ from pixelization.pixelize_helpers import (  # noqa: E402
     save_json,
 )
 
+THROUGHGOING_LCOS_TOL = 0.02
+THROUGHGOING_MIN_L3D_CM = 0.01
+THROUGHGOING_MIN_CHARGE_E_DEFAULT = 1.0e4
+
 
 def load_tree(path: Path):
     f = uproot.open(path)
@@ -564,7 +568,8 @@ def write_units_file(path: Path, params: CCDParams):
 - dE/dx: computed as EdepCCD * 1000 / trackLenCCD (MeV/cm) for trackLenCCD>0. Plots optionally require trackLenCCD>0.01 cm to avoid extreme ratios from grazing hits.
 - Canvas: adaptive mode sizes canvas to track length with margin; truncation flag marks charge touching the image edge.
 - PCA metrics: sigma_long/sigma_trans = sqrt(eigenvalues of charge covariance); elongation = sigma_long/sigma_trans; length_pix_img = p99-p1 along PCA axis (2D image plane); length_pix_geom = trackLenCCD * 1e4 / pixel_size (3D chord in pixels); length_expected_cm/pix = entry/exit projected length.
-- Quality cuts: EdepCCD>0, trackLenCCD>0, is_truncated=False."""
+- Quality cuts: EdepCCD>0, trackLenCCD>0, is_truncated=False.
+- Throughgoing: Lcos = trackLenCCD * |cos(thetaPri)| (using cos_{zenith}^{down}); require |Lcos - thickness| < 0.02 * thickness, trackLenCCD > 0.01 cm, and charge_e >= --min-charge-e (charge_e from EdepCCD * 1e9 / ev_per_electron)."""
     path.write_text(units_text)
 
 
@@ -644,6 +649,12 @@ def main():
     parser.add_argument("--quality-only", action="store_true", help="Use only quality (non-truncated) events for plots")
     parser.add_argument("--max-canvas", type=int, default=512, help="Cap for adaptive canvas dimension (pix)")
     parser.add_argument("--fail-on-warning", action="store_true", help="Exit non-zero if internal warnings trigger")
+    parser.add_argument(
+        "--min-charge-e",
+        type=float,
+        default=THROUGHGOING_MIN_CHARGE_E_DEFAULT,
+        help="Minimum total charge (e-) for throughgoing selection; set to 0 to disable.",
+    )
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -706,6 +717,7 @@ def main():
     n_events = len(events["EevtPri"])
     edep_ccd = np.asarray(events["EdepCCD"])
     track_len_ccd = np.asarray(events["trackLenCCD"])
+    charge_e = edep_ccd * 1.0e9 / params.ev_per_electron
     weights = None
     if "eventLivetime_s" in events:
         weights = np.asarray(events["eventLivetime_s"])
@@ -727,6 +739,18 @@ def main():
         cos_down = np.clip(-np.cos(events["thetaPri"]), 0.0, 1.0)
     clamp_low = int(np.sum(-np.cos(events["thetaPri"]) < 0))
     clamp_high = int(np.sum(-np.cos(events["thetaPri"]) > 1))
+    lcos = track_len_ccd * np.abs(cos_down)
+    thickness_cm = params.thickness_microns * 1.0e-4
+    min_charge_e = max(0.0, float(args.min_charge_e))
+    charge_mask = charge_e >= min_charge_e if min_charge_e > 0 else np.ones_like(charge_e, dtype=bool)
+    lcos_tol = THROUGHGOING_LCOS_TOL * thickness_cm
+    # Throughgoing selection: Lcos within tolerance of thickness + basic length/charge sanity.
+    mask_throughgoing = (
+        mask_hit
+        & (track_len_ccd > THROUGHGOING_MIN_L3D_CM)
+        & (np.abs(lcos - thickness_cm) < lcos_tol)
+        & charge_mask
+    )
 
     energy_pri = np.asarray(events["EevtPri"])
     energy_hits = energy_pri[mask_hit]
@@ -771,13 +795,23 @@ def main():
     fig.savefig(plots_dir / "validate_energy_hits_zoom.pdf")
     plt.close(fig)
     fig, ax = plt.subplots()
-    make_hist1d(
-        ax,
-        [(cos_down, "All thrown")],
+    counts, edges, _ = ax.hist(
+        cos_down,
         bins=60,
-        xlabel="cos_{zenith}^{down}",
-        title=f"Downward cos(zenith) all thrown (clamp low={clamp_low}, high={clamp_high})",
+        range=(0.0, 1.0),
+        histtype="step",
+        lw=2,
+        label="All thrown",
     )
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    curve = centers ** 2
+    if np.any(counts):
+        curve_scaled = curve / np.sum(curve) * np.sum(counts)
+        ax.plot(centers, curve_scaled, color="black", linestyle="--", label="expected ~ cos^2(zenith)")
+    ax.set_xlabel("cos_{zenith}^{down}")
+    ax.set_ylabel("Events")
+    ax.set_title(f"Downward cos(zenith) all thrown (clamp low={clamp_low}, high={clamp_high})")
+    ax.legend()
     fig.tight_layout()
     fig.savefig(plots_dir / "fig_coszenith_down.pdf")
     plt.close(fig)
@@ -916,16 +950,18 @@ def main():
     plt.close(fig)
 
     # L*cos(theta) sanity check vs CCD thickness
+    lcos_hit = lcos[mask_hit]
+    lcos_hit = lcos_hit[lcos_hit > 0]
+    lcos_through = lcos[mask_throughgoing]
+    lcos_through = lcos_through[lcos_through > 0]
     if ccd_thickness_cm > 0.0:
-        lcos = track_len_ccd[mask_hit] * np.abs(cos_down[mask_hit])
-        lcos = lcos[lcos > 0]
-        if lcos.size:
-            lcos_median = float(np.median(lcos))
+        if lcos_hit.size:
+            lcos_median = float(np.median(lcos_hit))
             lcos_ratio = lcos_median / ccd_thickness_cm if ccd_thickness_cm > 0 else 0.0
             lcos_median_val = lcos_median
             lcos_ratio_val = lcos_ratio
             fig, ax = plt.subplots()
-            ax.hist(lcos, bins=80, histtype="step", lw=2)
+            ax.hist(lcos_hit, bins=80, histtype="step", lw=2)
             ax.axvline(ccd_thickness_cm, color="red", linestyle="--", label="CCD thickness")
             ax.set_xlabel("trackLen * |cos(theta)| [cm]")
             ax.set_ylabel("Events")
@@ -933,6 +969,17 @@ def main():
             ax.legend()
             fig.tight_layout()
             fig.savefig(plots_dir / "fig_Lcos_vs_thickness.pdf")
+            plt.close(fig)
+
+            fig, ax = plt.subplots()
+            ax.hist(lcos_hit, bins=80, histtype="step", lw=2)
+            ax.axvline(ccd_thickness_cm, color="red", linestyle="--", label="CCD thickness")
+            ax.set_xlabel("Lcos = L3D * |cos(theta)| [cm]")
+            ax.set_ylabel("Events")
+            ax.set_title("Lcos distribution (hits)")
+            ax.legend()
+            fig.tight_layout()
+            fig.savefig(plots_dir / "fig_Lcos_distribution.pdf")
             plt.close(fig)
             if lcos_ratio < 0.5 or lcos_ratio > 1.5:
                 warnings.append(
@@ -966,8 +1013,12 @@ def main():
 
     # dE/dx (geometry-level, hits only)
     dedx_all = dedx_mev_per_cm(edep_ccd[mask_hit], track_len_ccd[mask_hit])
+    dedx_through = dedx_mev_per_cm(edep_ccd[mask_throughgoing], track_len_ccd[mask_throughgoing])
     dedx_mask = (track_len_ccd > 0.01) & mask_hit
     dedx_plot = dedx_mev_per_cm(edep_ccd[dedx_mask], track_len_ccd[dedx_mask])
+    charge_through = charge_e[mask_throughgoing]
+    charge_through_median = float(np.median(charge_through)) if charge_through.size else 0.0
+    dedx_through_median = float(np.median(dedx_through)) if dedx_through.size else 0.0
     if dedx_all.size:
         dedx_p = {p: float(np.percentile(dedx_all, p)) for p in [50, 84, 95, 99, 99.9]}
         print(
@@ -978,11 +1029,15 @@ def main():
         hi_tail = max(dedx_p[99.9], hi_zoom)
 
         fig, ax = plt.subplots()
-        ax.hist(dedx_all, bins=120, histtype="step", lw=2)
+        ax.hist(dedx_all, bins=120, histtype="step", lw=2, label="Hits")
+        if dedx_through.size:
+            ax.hist(dedx_through, bins=120, histtype="step", lw=2, linestyle="--", label="Throughgoing")
+        ax.axvline(3.9, color="red", linestyle=":", label="MIP reference")
         ax.set_xlabel("dE/dx [MeV/cm]")
         ax.set_ylabel("Events")
         ax.set_yscale("log")
         ax.set_title("dE/dx (hits)")
+        ax.legend()
         fig.tight_layout()
         fig.savefig(plots_dir / "fig_dEdx_hits.pdf")
         plt.close(fig)
@@ -1034,6 +1089,26 @@ def main():
         fig.tight_layout()
         fig.savefig(plots_dir / "fig_edep_vs_len_hits.pdf")
         plt.close(fig)
+        if np.any(mask_throughgoing):
+            fig, ax = plt.subplots()
+            make_2d(
+                ax,
+                track_len_ccd[mask_throughgoing],
+                edep_ccd[mask_throughgoing],
+                bins=50,
+                xlabel="L3D (trackLenCCD) [cm]",
+                ylabel="Edep CCD [GeV]",
+                title="Edep vs L3D (throughgoing)",
+            )
+            if dedx_all.size:
+                dedx_mean = float(np.mean(dedx_all))
+                x_line = np.linspace(0.0, float(np.percentile(track_len_ccd[mask_throughgoing], 99)), 50)
+                y_line = dedx_mean * x_line / 1000.0
+                ax.plot(x_line, y_line, color="white", lw=1, linestyle="--", label=f"mean dE/dx={dedx_mean:.2f} MeV/cm")
+                ax.legend()
+            fig.tight_layout()
+            fig.savefig(plots_dir / "fig_edep_vs_len_throughgoing.pdf")
+            plt.close(fig)
 
     # Pixelization
     valid_idxs = np.nonzero(mask_pixel)[0]
@@ -1099,6 +1174,7 @@ def main():
             cos_metric = cos_down[metric_idxs]
             sigma_trans = np.asarray([m["sigma_trans"] for m in metrics_source], dtype=float)
             charge = np.asarray([m["charge"] for m in metrics_source], dtype=float)
+            through_metric = mask_throughgoing[metric_idxs]
 
             fig, ax = plt.subplots()
             h = ax.hist2d(cos_metric, sigma_trans, bins=[40, 60], cmap="viridis")
@@ -1107,7 +1183,14 @@ def main():
             valid = counts > 0
             if np.any(valid):
                 ax.plot(centers[valid], means[valid], color="white", lw=1.5, label="Mean")
-                ax.legend()
+            if np.any(through_metric):
+                centers_t, means_t, counts_t = binned_profile(
+                    cos_metric[through_metric], sigma_trans[through_metric], np.linspace(0.0, 1.0, 21)
+                )
+                valid_t = counts_t > 0
+                if np.any(valid_t):
+                    ax.plot(centers_t[valid_t], means_t[valid_t], color="orange", lw=1.5, linestyle="--", label="Throughgoing")
+            ax.legend()
             ax.set_xlabel("cos_{zenith}^{down}")
             ax.set_ylabel("Sigma_trans (PCA) [pix]")
             ax.set_title("Cluster width vs cos(zenith)")
@@ -1122,7 +1205,14 @@ def main():
             valid = counts > 0
             if np.any(valid):
                 ax.plot(centers[valid], means[valid], color="white", lw=1.5, label="Mean")
-                ax.legend()
+            if np.any(through_metric):
+                centers_t, means_t, counts_t = binned_profile(
+                    cos_metric[through_metric], charge[through_metric], np.linspace(0.0, 1.0, 21)
+                )
+                valid_t = counts_t > 0
+                if np.any(valid_t):
+                    ax.plot(centers_t[valid_t], means_t[valid_t], color="orange", lw=1.5, linestyle="--", label="Throughgoing")
+            ax.legend()
             ax.set_xlabel("cos_{zenith}^{down}")
             ax.set_ylabel("Cluster charge [e-]")
             ax.set_title("Cluster charge vs cos(zenith)")
@@ -1143,11 +1233,19 @@ def main():
 
     # Tables
     truncated_count = max(0, len(metrics_all) - len(metrics_quality))
+    n_quality = int(np.sum(mask_quality))
+    n_throughgoing = int(np.sum(mask_throughgoing))
+    quality_fraction_hits = float(n_quality / n_hits) if n_hits else 0.0
+    through_fraction_hits = float(n_throughgoing / n_hits) if n_hits else 0.0
+    through_fraction_quality = float(n_throughgoing / n_quality) if n_quality else 0.0
+    quality_sample_coverage = float(len(metrics_all) / n_hits) if n_hits else 0.0
     validation_summary = {
         "n_events": int(n_events),
         "n_thrown": int(n_events),
         "n_events_ccd": int(n_hits),
         "n_hits": int(n_hits),
+        "n_quality": int(n_quality),
+        "n_throughgoing": int(n_throughgoing),
         "n_pixel_metrics_all": int(len(metrics_all)),
         "n_pixel_metrics_quality": int(len(metrics_quality)),
         "n_truncated_flagged": int(truncated_count),
@@ -1155,6 +1253,10 @@ def main():
         "cos_clamp_low": clamp_low,
         "cos_clamp_high": clamp_high,
         "hit_fraction": hit_fraction,
+        "quality_fraction_hits": quality_fraction_hits,
+        "throughgoing_fraction_hits": through_fraction_hits,
+        "throughgoing_fraction_quality": through_fraction_quality,
+        "quality_sample_coverage": quality_sample_coverage,
         "total_livetime_s": total_livetime,
         "hit_rate_hz": hit_rate_hz,
     }
@@ -1181,6 +1283,12 @@ def main():
     validation_summary["trackLenCCD_vert_median_cm"] = track_len_vert_median
     validation_summary["trackLenCCD_vert_peak_cm"] = track_len_vert_peak
     validation_summary["trackLenCCD_vert_count"] = int(track_len_vert.size)
+    if lcos_hit.size:
+        validation_summary.update({f"Lcos_hits_{k}": v for k, v in basic_stats(lcos_hit).items()})
+    if lcos_through.size:
+        validation_summary.update({f"Lcos_through_{k}": v for k, v in basic_stats(lcos_through).items()})
+    validation_summary["charge_through_median_e"] = charge_through_median
+    validation_summary["dEdx_through_median"] = dedx_through_median
     if l2d_expected_cm.size:
         validation_summary.update(
             {f"L2D_expected_hits_{k}": v for k, v in basic_stats(l2d_expected_cm[mask_hit]).items()}
@@ -1239,6 +1347,44 @@ def main():
             validation_summary[k] = run_info[k]
     write_csv(tables_dir / "validation_summary.csv", [validation_summary])
 
+    cutflow_rows = [
+        {
+            "stage": "thrown",
+            "count": int(n_events),
+            "fraction_of_thrown": 1.0,
+            "fraction_of_hits": 1.0 if n_hits > 0 else 0.0,
+            "fraction_of_prev": 1.0,
+        },
+        {
+            "stage": "hits",
+            "count": int(n_hits),
+            "fraction_of_thrown": hit_fraction,
+            "fraction_of_hits": 1.0,
+            "fraction_of_prev": hit_fraction,
+        },
+        {
+            "stage": "quality",
+            "count": int(n_quality),
+            "fraction_of_thrown": float(n_quality / n_events) if n_events else 0.0,
+            "fraction_of_hits": quality_fraction_hits,
+            "fraction_of_prev": float(n_quality / n_hits) if n_hits else 0.0,
+        },
+        {
+            "stage": "throughgoing",
+            "count": int(n_throughgoing),
+            "fraction_of_thrown": float(n_throughgoing / n_events) if n_events else 0.0,
+            "fraction_of_hits": through_fraction_hits,
+            "fraction_of_prev": through_fraction_quality,
+        },
+    ]
+    print("[cutflow] stage,count,fraction_of_thrown,fraction_of_hits")
+    for row in cutflow_rows:
+        print(
+            f"[cutflow] {row['stage']},{row['count']},"
+            f"{row['fraction_of_thrown']:.6f},{row['fraction_of_hits']:.6f}"
+        )
+    write_csv(tables_dir / "cutflow.csv", cutflow_rows)
+
     if metrics_all:
         write_csv(tables_dir / "pixel_metrics_all.csv", metrics_all)
     if metrics_quality:
@@ -1264,6 +1410,7 @@ def main():
         "canvas_mode": args.canvas_mode,
         "canvas_size": args.canvas_size,
         "margin_pix": args.margin_pix,
+        "min_charge_e": args.min_charge_e,
         "fail_on_warning": args.fail_on_warning,
         "ccd_params": vars(params),
     }

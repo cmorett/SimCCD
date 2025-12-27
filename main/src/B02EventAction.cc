@@ -143,6 +143,7 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
   G4double muonCosTheta = 1.0;
   G4double muonEnergySampledGeV = 0.0;
   G4int muonModeCode = 0;
+  G4int muonIsTargeted = 0;
   G4int fluxModelCode = 0;
   G4double cfgSourceZ = 0.0;
   G4double cfgSourceLx = 0.0;
@@ -225,6 +226,7 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
     muonPDGCode = gen->GetMuonPDGCode();
     muonChargeSign = gen->GetMuonChargeSign();
     muonChargeRatio = gen->GetMuonChargeRatio();
+    muonIsTargeted = gen->GetIsTargeted() ? 1 : 0;
   }
 
   if (const auto* runAction = dynamic_cast<const B02RunAction*>(
@@ -401,6 +403,7 @@ void B02EventAction::EndOfEventAction(const G4Event* aEvent)
       analysisManager->FillNtupleDColumn(1,60,macroPathHash);
       analysisManager->FillNtupleDColumn(1,61,physicsListHash);
       analysisManager->FillNtupleDColumn(1,62,muonChargeRatio);
+      analysisManager->FillNtupleIColumn(1,63,muonIsTargeted);
       analysisManager->AddNtupleRow(1);
 
 // analysisManager->FillNtupleDColumn(1,9,fLength/cm);

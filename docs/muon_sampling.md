@@ -1,9 +1,10 @@
 # Cosmic muon sampling modes
 
-SimCCD now supports two generator modes:
+SimCCD now supports two generator modes plus an optional targeted impact sampler:
 
 - **forced_footprint** (legacy): back-projects muons through the CCD footprint; nearly every generated muon hits the CCD. Useful for fast pixel-statistics studies.
 - **tierB_plane_flux** (new, Tier B): samples muons from a realistic Modified Gaisser flux on a source plane larger than the CCD, producing natural hit/miss fractions and an event weight (effective livetime) per event.
+- **tierB_plane_flux + targeted impact**: `/sim/muon/mode targeted` picks a uniform impact point on the CCD footprint (plus optional margin) and back-projects the same sampled `(theta,phi)` to the source plane. This is a biased sampler for morphology/shape studies; weights are set to zero.
 
 ## Flux model (Guan 2015 Modified Gaisser)
 
@@ -25,6 +26,7 @@ Sampling accounts for the projected rate through a horizontal plane: the joint d
 - Auto-size (`sourcePlaneAutoSize=true`) enlarges the plane to cover the CCD footprint for a chosen `thetaMax`:  
   `Lx = max(sourcePlaneLx, px*cm + 2*z0*tan(thetaMax) + margin)` and same for `Ly`. This is convenient when tilting the flux to larger zenith angles; expect a smaller hit fraction as the plane grows.
 - Event weights: for Tier B with flux sampling (`useFixedEnergy=false`), each event stores `muonWeight_s` and `eventLivetime_s = 1 / (flux_integral * plane_area)` so `N` generated events represent `N * eventLivetime_s` seconds of effective exposure. Weights are set to zero when `useFixedEnergy=true`.
+- Targeted impact mode: `/sim/muon/mode targeted` samples `(x_imp,y_imp)` uniformly over the CCD footprint (plus `/sim/muon/targetMargin`) at `impactPlaneZ` (default 0 cm). The source position is back-projected to hit that point with the same sampled direction. Because this is biased, weights are forced to zero; use for morphology studies only.
 - Generator configuration is written into the ntuple (`B02Evts`): `muonModeCode`, `fluxModelCode`, `cfg_sourcePlaneZ_cm`, `cfg_sourcePlaneLx_cm`, `cfg_sourcePlaneLy_cm`, `cfg_thetaMax_deg`, `cfg_EminGeV_eff`, `cfg_EmaxGeV_eff` for reproducibility.
 
 ## Overburden and charge ratio (realism knobs)
@@ -46,7 +48,7 @@ Batch run using the provided macro:
 main/build/Release/b02_executable.exe --no-vis main/macros/run_tierB_cosmic_muons.mac
 ```
 
-Key UI commands (all under `/generator/`):
+Key UI commands (under `/generator/` unless noted):
 - `muonMode tierB_plane_flux` (or `forced_footprint`)
 - `fluxModel guan2015|pdg_gaisser`
 - `useFixedEnergy true|false` plus `muonEnergyGeV` (fixed) or `EminGeV`/`EmaxGeV` (flux)
@@ -54,8 +56,10 @@ Key UI commands (all under `/generator/`):
 - `sourcePlaneZ <value> cm`
 - `sourcePlaneAutoSize true|false`
 - `sourcePlaneLx <value> cm`, `sourcePlaneLy <value> cm`, `sourcePlaneMargin <value> cm`
+- `/sim/muon/mode unbiased|targeted` (impact sampling)
+- `/sim/muon/targetMargin <value> cm` (extra footprint margin for targeted mode)
 
-Outputs (ROOT ntuple `B02Evts`) now include Tier B diagnostics: `muonCosTheta`, `muonWeight_s`, `eventLivetime_s`, `muonModeCode`, and `muonEnergySampledGeV` plus the existing positions (`muonX0/Y0/Z0`, `muonXImp/YImp/ZImp`) and angles.
+Outputs (ROOT ntuple `B02Evts`) now include Tier B diagnostics: `muonCosTheta`, `muonWeight_s`, `eventLivetime_s`, `muonModeCode`, and `muonEnergySampledGeV` plus the existing positions (`muonX0/Y0/Z0`, `muonXImp/YImp/ZImp`) and angles. `isTargeted=1` marks targeted impact sampling.
 
 Validation: use `analysis/validate_muon_tierB.py --input <B02ntuples.root>` to dump cos(theta), energy, and `(x0,y0)` histograms alongside the hit fraction and effective livetime.
 
