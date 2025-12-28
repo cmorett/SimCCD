@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -158,7 +159,7 @@ def run_batch(
     dry_run: bool,
 ) -> float:
     cmd = [str(exe), "--geometry", geometry_mode, "--cad-mode", job.mode]
-    if cad_file:
+    if cad_file and job.mode != "none":
         cmd += ["--cad-file", str(cad_file)]
     if assets_dir:
         cmd += ["--assets-dir", str(assets_dir)]
@@ -338,8 +339,21 @@ def run_paired(
 ) -> RunResult:
     if not exe.exists():
         raise SystemExit(f"Executable not found: {exe}")
+    if exe.is_dir():
+        raise SystemExit(f"Executable path is a directory: {exe}")
+    if os.name != "nt" and not os.access(exe, os.X_OK):
+        raise SystemExit(f"Executable is not runnable (missing +x): {exe}")
     if not macro.exists():
         raise SystemExit(f"Macro not found: {macro}")
+    if macro.is_dir():
+        raise SystemExit(f"Macro path is a directory: {macro}")
+    if geometry_mode == "cad" and geometry_cad != "none":
+        if cad_file is None:
+            raise SystemExit("CAD file is required for CAD runs (set --cad-file or config).")
+        if not cad_file.exists():
+            raise SystemExit(f"CAD file not found: {cad_file}")
+        if cad_file.is_dir():
+            raise SystemExit(f"CAD file path is a directory: {cad_file}")
 
     base_lines = filter_macro_lines(read_macro_lines(macro))
     counts_none = split_batches(thrown_none, batch_size)
@@ -453,7 +467,9 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
-    exe = (repo_root / args.exe).resolve() if not Path(args.exe).is_absolute() else Path(args.exe)
+    exe_value = os.environ.get("SIMCCD_EXE", args.exe)
+    exe_path = Path(exe_value).expanduser()
+    exe = (repo_root / exe_path).resolve() if not exe_path.is_absolute() else exe_path
     macro = (repo_root / args.mac).resolve() if not Path(args.mac).is_absolute() else Path(args.mac)
     cad_file = None
     if args.cad_file:

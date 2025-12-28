@@ -7,6 +7,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +21,21 @@ except ImportError as exc:
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def resolve_python_executable() -> str:
+    override = os.environ.get("SIMCCD_PYTHON")
+    if not override:
+        return sys.executable
+    resolved = shutil.which(override)
+    if resolved:
+        return resolved
+    path = Path(override).expanduser()
+    if path.is_file():
+        if os.name != "nt" and not os.access(path, os.X_OK):
+            raise SystemExit(f"SIMCCD_PYTHON is not executable: {path}")
+        return str(path)
+    raise SystemExit(f"SIMCCD_PYTHON not found: {override}")
 
 
 def load_yaml(path: Path) -> Dict:
@@ -39,6 +56,7 @@ def run_cmd(cmd: List[str], dry_run: bool) -> None:
 
 
 def run_paired(
+    python_exe: str,
     tag: str,
     exe: Path,
     macro: Path,
@@ -55,7 +73,7 @@ def run_paired(
     dry_run: bool,
 ) -> Path:
     cmd = [
-        sys.executable,
+        python_exe,
         "analysis/run_cad_vs_none_paired.py",
         "--tag",
         tag,
@@ -91,6 +109,7 @@ def run_paired(
 
 
 def run_make_paper_outputs(
+    python_exe: str,
     merged_root: Path,
     output_base: Path,
     tag: str,
@@ -102,7 +121,7 @@ def run_make_paper_outputs(
     if resume and cutflow.exists():
         return
     cmd = [
-        sys.executable,
+        python_exe,
         "analysis/make_paper_outputs.py",
         "--input",
         str(merged_root),
@@ -127,6 +146,7 @@ def run_make_paper_outputs(
 
 
 def run_compare_modes(
+    python_exe: str,
     cad_root: Path,
     none_root: Path,
     out_dir: Path,
@@ -142,7 +162,7 @@ def run_compare_modes(
     if resume and all(p.exists() for p in must_have):
         return
     cmd = [
-        sys.executable,
+        python_exe,
         "analysis/compare_modes.py",
         "--cad",
         str(cad_root),
@@ -353,6 +373,8 @@ def main() -> int:
     args = parser.parse_args()
 
     config = load_yaml(resolve_path(args.config))
+    if os.environ.get("SIMCCD_EXE"):
+        config["exe"] = os.environ["SIMCCD_EXE"]
     if args.tag:
         config["tag"] = args.tag
     if args.exe:
@@ -373,6 +395,8 @@ def main() -> int:
         config["seed_base"] = args.seed_base
     if args.resume:
         config["resume"] = True
+
+    python_exe = resolve_python_executable()
 
     tag = config.get("tag", "cad_vs_none")
     exe = resolve_path(config["exe"])
@@ -400,6 +424,7 @@ def main() -> int:
         sanity_paper_root = paper_root / "sanity"
 
         sanity_meta = run_paired(
+            python_exe=python_exe,
             tag=sanity_tag,
             exe=exe,
             macro=macro,
@@ -418,11 +443,17 @@ def main() -> int:
 
         none_root = sanity_out_root / "none" / "merged.root"
         cad_root = sanity_out_root / "cad" / "merged.root"
-        run_make_paper_outputs(none_root, sanity_paper_root, "none", analysis_cfg, args.dry_run, resume)
-        run_make_paper_outputs(cad_root, sanity_paper_root, "cad", analysis_cfg, args.dry_run, resume)
+        run_make_paper_outputs(
+            python_exe, none_root, sanity_paper_root, "none", analysis_cfg, args.dry_run, resume
+        )
+        run_make_paper_outputs(
+            python_exe, cad_root, sanity_paper_root, "cad", analysis_cfg, args.dry_run, resume
+        )
 
         compare_dir = sanity_paper_root / "compare"
-        run_compare_modes(cad_root, none_root, compare_dir, analysis_cfg, args.dry_run, resume)
+        run_compare_modes(
+            python_exe, cad_root, none_root, compare_dir, analysis_cfg, args.dry_run, resume
+        )
 
         if not args.dry_run:
             none_cutflow = sanity_paper_root / "none" / "tables" / "cutflow.csv"
@@ -458,6 +489,7 @@ def main() -> int:
 
     # Production run
     prod_meta = run_paired(
+        python_exe=python_exe,
         tag=tag,
         exe=exe,
         macro=macro,
@@ -476,11 +508,11 @@ def main() -> int:
 
     none_root = out_root / "none" / "merged.root"
     cad_root = out_root / "cad" / "merged.root"
-    run_make_paper_outputs(none_root, paper_root, "none", analysis_cfg, args.dry_run, resume)
-    run_make_paper_outputs(cad_root, paper_root, "cad", analysis_cfg, args.dry_run, resume)
+    run_make_paper_outputs(python_exe, none_root, paper_root, "none", analysis_cfg, args.dry_run, resume)
+    run_make_paper_outputs(python_exe, cad_root, paper_root, "cad", analysis_cfg, args.dry_run, resume)
 
     compare_dir = paper_root / "compare"
-    run_compare_modes(cad_root, none_root, compare_dir, analysis_cfg, args.dry_run, resume)
+    run_compare_modes(python_exe, cad_root, none_root, compare_dir, analysis_cfg, args.dry_run, resume)
 
     if not args.dry_run:
         summary_path = REPO_ROOT / f"docs/cad_vs_none_summary_{tag}.md"

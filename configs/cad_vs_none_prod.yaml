@@ -1,5 +1,5 @@
 tag: cad_vs_none_prod_v1
-exe: build/vs2022/main/Release/b02_executable.exe
+exe: /storage/icn/carlos.morett/build/simccd/b02_executable
 mac: run/paper_v1_driver_200k.mac
 cad_file: main/assets/cad/new_assembly_cleaned_assimp.dae
 geometry:

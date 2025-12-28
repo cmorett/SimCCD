@@ -1,8 +1,10 @@
 # CAD vs none pipeline
 
-This workflow runs paired simulations (no geometry vs tessellated CAD), produces
+This workflow runs paired simulations (no CAD import vs tessellated CAD), produces
 paper-ready outputs, generates CAD/none comparison plots with uncertainties, and
 writes a markdown summary for a paper appendix.
+
+For xook/SLURM step-by-step instructions, see `docs/cluster_run_cad_vs_none.md`.
 
 ## Entry point
 
@@ -41,7 +43,7 @@ The sanity gate fails (and production is blocked) if any of:
 
 After sanity passes, production proceeds:
 
-- no geometry: 1,000,000 thrown
+- no CAD (cad-mode none): 1,000,000 thrown
 - CAD tessellated: 500,000 thrown
 - merged ROOTs in `outputs/<tag>/none/merged.root` and `outputs/<tag>/cad/merged.root`
 - paper outputs in `paper_outputs/<tag>/none/` and `paper_outputs/<tag>/cad/`
