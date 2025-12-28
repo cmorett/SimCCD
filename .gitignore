@@ -1,3 +1,7 @@
 build/
 paper_outputs/
 cad_run_oldsample.root
+outputs/ephemeral/
+run/auto/
+outputs/parallel_logs/
+outputs/*.log

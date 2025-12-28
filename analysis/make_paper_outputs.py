@@ -569,7 +569,7 @@ def write_units_file(path: Path, params: CCDParams):
 - Canvas: adaptive mode sizes canvas to track length with margin; truncation flag marks charge touching the image edge.
 - PCA metrics: sigma_long/sigma_trans = sqrt(eigenvalues of charge covariance); elongation = sigma_long/sigma_trans; length_pix_img = p99-p1 along PCA axis (2D image plane); length_pix_geom = trackLenCCD * 1e4 / pixel_size (3D chord in pixels); length_expected_cm/pix = entry/exit projected length.
 - Quality cuts: EdepCCD>0, trackLenCCD>0, is_truncated=False.
-- Throughgoing: Lcos = trackLenCCD * |cos(thetaPri)| (using cos_{zenith}^{down}); require |Lcos - thickness| < 0.02 * thickness, trackLenCCD > 0.01 cm, and charge_e >= --min-charge-e (charge_e from EdepCCD * 1e9 / ev_per_electron)."""
+- Throughgoing: Lcos = trackLenCCD * |cos(thetaPri)| (using cos_{{zenith}}^{{down}}); require |Lcos - thickness| < 0.02 * thickness, trackLenCCD > 0.01 cm, and charge_e >= --min-charge-e (charge_e from EdepCCD * 1e9 / ev_per_electron)."""
     path.write_text(units_text)
 
 
@@ -863,10 +863,12 @@ def main():
         ylabel="y_imp [cm]",
         title="Impact plane (all thrown)",
     )
-    # overlay CCD footprint +/-0.75 cm
-    for x in (-0.75, 0.75):
+    # overlay CCD footprint from params
+    half_x_cm = 0.5 * params.width_microns * 1.0e-4
+    half_y_cm = 0.5 * params.height_microns * 1.0e-4
+    for x in (-half_x_cm, half_x_cm):
         ax.axvline(x, color="red", linestyle="--", linewidth=1)
-    for y in (-0.75, 0.75):
+    for y in (-half_y_cm, half_y_cm):
         ax.axhline(y, color="red", linestyle="--", linewidth=1)
     fig.tight_layout()
     fig.savefig(plots_dir / "fig_xyImpact.pdf")

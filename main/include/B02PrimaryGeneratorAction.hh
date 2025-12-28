@@ -97,10 +97,10 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
     // double px = 18.;
     // double py = 18.; 
 
-    // ==== Dimensiones para CCD de 250x529 (ICN) ==== //
+    // ==== Active CCD footprint (from CAD): 5.461 cm x 5.461 cm ==== //
     double R = 8.; // cm
-    double px = 1.5; // cm
-    double py = 1.5; // cm
+    double px = 5.461; // cm
+    double py = 5.461; // cm
 
     // ==== Dimensiones para CONNIE (1022x420) ==== //
     // double R = 7.; // cm

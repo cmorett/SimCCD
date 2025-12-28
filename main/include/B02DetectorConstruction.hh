@@ -5,6 +5,7 @@
 
 #include "globals.hh"
 #include "G4SystemOfUnits.hh"
+#include "G4ThreeVector.hh"
 #include "G4VUserDetectorConstruction.hh"
 
 #include <string>
@@ -19,7 +20,7 @@ struct aiScene;
 
 struct GeometryOptions {
   G4String geometryMode = "cad";   // "cad" or "primitive"
-  G4String cadMode = "merged";     // "merged" or "parts"
+  G4String cadMode = "merged";     // "merged", "parts", "tessellated", or "none"
   G4String cadFile;
   G4String assetsDir;
   G4bool checkOverlaps = true;
@@ -65,7 +66,11 @@ class B02DetectorConstruction : public G4VUserDetectorConstruction
     void ConfigureCCDRegion();
     G4LogicalVolume* BuildCadMergedTessellated(const aiScene& scene, G4Material* material, G4double scale);
     G4LogicalVolume* BuildCadBoundingUnion(const aiScene& scene, G4Material* material, G4double scale);
-    std::vector<G4LogicalVolume*> BuildCadParts(const aiScene& scene, G4Material* material, G4double scale);
+    std::vector<G4LogicalVolume*> BuildCadParts(const aiScene& scene,
+                                                G4Material* defaultMaterial,
+                                                G4Material* copperMaterial,
+                                                G4double scale,
+                                                const std::vector<bool>& copperMeshes);
     void RegisterSensitiveVolume(G4LogicalVolume* lv);
     std::string ResolveCadPath() const;
     std::string ResolveAssetsDir() const;
@@ -76,7 +81,10 @@ class B02DetectorConstruction : public G4VUserDetectorConstruction
     G4VPhysicalVolume* fWorldPhysical = nullptr;
     std::vector<G4LogicalVolume*> fSensitiveVolumes;
     G4LogicalVolume* fPrimaryScoring = nullptr;
+    G4LogicalVolume* fCadSteelLogical = nullptr;
+    G4LogicalVolume* fCadCopperLogical = nullptr;
     G4LogicalVolume* fCCDOverlayLogical = nullptr;
+    G4ThreeVector fCCDOverlayCenter = G4ThreeVector();
     G4GenericMessenger* fOverburdenMessenger = nullptr;
     G4GenericMessenger* fCutsMessenger = nullptr;
     G4GenericMessenger* fCCDMessenger = nullptr;

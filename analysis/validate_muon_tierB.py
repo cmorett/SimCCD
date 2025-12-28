@@ -26,7 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from pixelization.pixelize_helpers import ensure_dir  # noqa: E402
+from pixelization.pixelize_helpers import CCDParams, ensure_dir  # noqa: E402
 
 
 def load_events(path: Path) -> Dict[str, np.ndarray]:
@@ -154,9 +154,12 @@ def main():
         ax.set_xlabel("xImp [cm]")
         ax.set_ylabel("yImp [cm]")
         ax.set_title("Predicted impact at z=0")
-        for x in (-0.75, 0.75):
+        params = CCDParams()
+        half_x_cm = 0.5 * params.width_microns * 1.0e-4
+        half_y_cm = 0.5 * params.height_microns * 1.0e-4
+        for x in (-half_x_cm, half_x_cm):
             ax.axvline(x, color="red", linestyle="--", linewidth=1)
-        for y in (-0.75, 0.75):
+        for y in (-half_y_cm, half_y_cm):
             ax.axhline(y, color="red", linestyle="--", linewidth=1)
         fig.tight_layout()
         fig.savefig(out_dir / "impact_plane_xy.pdf")

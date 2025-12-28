@@ -9,10 +9,10 @@
 /generator/EminGeV 1.0
 /generator/EmaxGeV 10000
 /generator/thetaMax 80 deg
-/generator/sourcePlaneZ 8 cm
+/generator/sourcePlaneZ 15 cm
 /generator/sourcePlaneAutoSize false
-/generator/sourcePlaneLx 10 cm
-/generator/sourcePlaneLy 10 cm
+/generator/sourcePlaneLx 30 cm
+/generator/sourcePlaneLy 30 cm
 /generator/sourcePlaneMargin 0 cm
 /generator/muonChargeMode fixedRatio
 /generator/muonPlusToMinusRatio 1.25

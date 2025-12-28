@@ -47,7 +47,7 @@ void PrintUsage() {
   std::cout << "Usage: b02_executable [options] [macro.mac]\n"
             << "Options:\n"
             << "  --geometry <cad|primitive>   Select geometry mode (default: cad)\n"
-            << "  --cad-mode <merged|parts|tessellated>    CAD import mode (default: merged)\n"
+            << "  --cad-mode <merged|parts|tessellated|none>    CAD import mode (default: merged)\n"
             << "  --cad-file <path>            Path to assembly.dae\n"
             << "  --assets-dir <dir>           Path to assets directory containing cad/\n"
             << "  --no-vis                     Disable visualization manager\n"
@@ -123,7 +123,7 @@ AppOptions ParseOptions(int argc, char** argv) {
     opts.geom.geometryMode = "cad";
   }
   if (opts.geom.cadMode != "parts" && opts.geom.cadMode != "merged" &&
-      opts.geom.cadMode != "tessellated") {
+      opts.geom.cadMode != "tessellated" && opts.geom.cadMode != "none") {
     std::cerr << "Unrecognized CAD mode '" << opts.geom.cadMode
               << "', falling back to 'merged'.\n";
     opts.geom.cadMode = "merged";

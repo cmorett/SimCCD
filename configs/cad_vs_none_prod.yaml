@@ -1,0 +1,21 @@
+tag: cad_vs_none_prod_v1
+exe: build/vs2022/main/Release/b02_executable.exe
+mac: run/paper_v1_driver_200k.mac
+cad_file: main/assets/cad/new_assembly_cleaned_assimp.dae
+geometry:
+  none: none
+  cad: tessellated
+thrown:
+  none: 1000000
+  cad: 500000
+batch_size: 5000
+max_workers: 16
+seed_base: 12345
+resume: true
+analysis:
+  pixel_size_microns: 15
+  thickness_microns: 725
+  min_charge_e: 10000
+  quality_only: true
+  examples: 200
+  dist_events: 50000

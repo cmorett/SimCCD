@@ -16,9 +16,9 @@ class CCDParams:
     pixel_size_microns: float = DEFAULT_PIXEL_SIZE_MICRONS
     thickness_microns: float = DEFAULT_CCD_THICKNESS_MICRONS
     ev_per_electron: float = EV_PER_ELECTRON
-    # Active silicon area (default: 0.9 cm x 0.6 cm from CONNIE-like CCD)
-    width_microns: float = 9000.0
-    height_microns: float = 6000.0
+    # Active silicon area (5.461 cm x 5.461 cm from CAD)
+    width_microns: float = 54610.0
+    height_microns: float = 54610.0
     # Diffusion tuned to give sigma ~6-8 px at full depth for clear but moderate thickening
     diffusion_alpha: float = 1400.0  # micron^2 scale in sqrt(|alpha * ln(1 - beta z)|)
     diffusion_beta: float = 1.0 / (DEFAULT_CCD_THICKNESS_MICRONS + 1.0)
