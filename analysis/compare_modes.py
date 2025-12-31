@@ -1,139 +1,256 @@
 #!/usr/bin/env python3
 """
-Compare CAD vs none ROOT outputs with uncertainty bands and ratio panels.
+Paper-ready comparison of two simulation modes (e.g., CAD vs none) using paper output folders.
+
+Inputs:
+- Two mode-specific output folders produced by analysis/make_paper_outputs.py (each contains tables/*.csv and run_config.json).
+- Optional direct merged ROOT overrides (if run_config inputs are missing or moved).
+
+Outputs:
+- Comparison PDFs with ratio panels and uncertainties under the requested output folder.
+- comparison_summary.csv with headline metrics and ratios.
+- Optional markdown summary when --summary is provided.
 """
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+import sys
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib import colors  # noqa: E402
 import numpy as np  # noqa: E402
 
 try:
     import uproot  # noqa: E402
-except ImportError as exc:
+except ImportError as exc:  # pragma: no cover - dependency guard
     raise SystemExit("This script requires the 'uproot' package. Install via pip.") from exc
+
+try:
+    import pandas as pd  # noqa: E402
+except ImportError:  # pragma: no cover - optional
+    pd = None
+
+try:
+    import yaml  # noqa: E402
+except ImportError:  # pragma: no cover - optional
+    yaml = None
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from pixelization.pixelize_helpers import EV_PER_ELECTRON  # noqa: E402
 
+THROUGHGOING_LCOS_TOL = 0.02
+THROUGHGOING_MIN_L3D_CM = 0.01
+COS_BINS_DEFAULT = 20
 
-def load_events(path: Path) -> Dict[str, np.ndarray]:
-    with uproot.open(path) as root:
-        if "B02Evts" not in root:
-            raise RuntimeError(f"B02Evts tree missing in {path}")
-        tree = root["B02Evts"]
-        needed = ["EdepCCD", "trackLenCCD", "thetaPri", "muonCosTheta", "nStepsCCD"]
+
+def ensure_dir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def load_json(path: Path) -> Dict:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def load_run_config(mode_dir: Path) -> Dict:
+    return load_json(mode_dir / "run_config.json")
+
+
+def load_csv_first_row(path: Path) -> Dict[str, float]:
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            parsed: Dict[str, float] = {}
+            for k, v in row.items():
+                try:
+                    parsed[k] = float(v)
+                except (TypeError, ValueError):
+                    parsed[k] = v
+            return parsed
+    return {}
+
+
+def load_validation_row(mode_dir: Path) -> Dict[str, float]:
+    return load_csv_first_row(mode_dir / "tables" / "validation_summary.csv")
+
+
+def load_cutflow(mode_dir: Path) -> Dict[str, int]:
+    path = mode_dir / "tables" / "cutflow.csv"
+    rows: Dict[str, int] = {}
+    if not path.exists():
+        return rows
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            try:
+                rows[row["stage"]] = int(float(row.get("count", 0)))
+            except Exception:
+                continue
+    return rows
+
+
+def percentile_from_pixel_metrics(mode_dir: Path, column: str, percentile: float = 99.0) -> Optional[float]:
+    path = mode_dir / "tables" / "pixel_metrics_quality.csv"
+    if not path.exists():
+        return None
+    if pd is not None:
+        try:
+            series = pd.read_csv(path, usecols=[column])[column].dropna()
+            if series.empty:
+                return None
+            return float(np.percentile(series.to_numpy(), percentile))
+        except Exception:
+            return None
+    values: List[float] = []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            if column not in row:
+                break
+            try:
+                values.append(float(row[column]))
+            except Exception:
+                continue
+    if not values:
+        return None
+    return float(np.percentile(np.asarray(values, dtype=float), percentile))
+
+
+def load_events(root_path: Path, fields: Sequence[str]) -> Dict[str, np.ndarray]:
+    with uproot.open(root_path) as root_file:
+        if "B02Evts" not in root_file:
+            raise RuntimeError(f"B02Evts tree missing in {root_path}")
+        tree = root_file["B02Evts"]
         events: Dict[str, np.ndarray] = {}
-        for name in needed:
+        for name in fields:
             if name in tree:
-                events[name] = tree[name].array(library="np")
-        # Always include EdepCCD and trackLenCCD for size
-        for name in ("EdepCCD", "trackLenCCD", "thetaPri"):
-            if name not in events and name in tree:
                 events[name] = tree[name].array(library="np")
         return events
 
 
 def compute_cos_down(events: Dict[str, np.ndarray]) -> np.ndarray:
     if "muonCosTheta" in events:
-        cos_down = np.asarray(events["muonCosTheta"])
+        cos_down = np.asarray(events["muonCosTheta"], dtype=float)
+    elif "thetaPri" in events:
+        cos_down = -np.cos(np.asarray(events["thetaPri"], dtype=float))
     else:
-        cos_down = np.clip(-np.cos(np.asarray(events["thetaPri"])), 0.0, 1.0)
+        raise RuntimeError("Neither muonCosTheta nor thetaPri found; cannot compute cos(zenith).")
     return np.clip(cos_down, 0.0, 1.0)
 
 
-def compute_hit_mask(events: Dict[str, np.ndarray]) -> np.ndarray:
-    edep = np.asarray(events["EdepCCD"])
-    track_len = np.asarray(events["trackLenCCD"])
+def compute_hit_mask(edep: np.ndarray, track_len: np.ndarray, n_steps: Optional[np.ndarray]) -> np.ndarray:
     mask = (edep > 0) | (track_len > 0)
-    if "nStepsCCD" in events:
-        mask |= np.asarray(events["nStepsCCD"]) > 0
+    if n_steps is not None:
+        mask |= n_steps > 0
     return mask
 
 
 def compute_throughgoing_mask(
-    events: Dict[str, np.ndarray],
+    edep: np.ndarray,
+    track_len: np.ndarray,
     cos_down: np.ndarray,
     thickness_cm: float,
     min_charge_e: float,
+    mask_hit: np.ndarray,
 ) -> np.ndarray:
-    track_len = np.asarray(events["trackLenCCD"])
-    edep = np.asarray(events["EdepCCD"])
-    hit_mask = compute_hit_mask(events)
-    charge_e = edep * 1.0e9 / EV_PER_ELECTRON
     lcos = track_len * np.abs(cos_down)
-    tol = 0.02 * thickness_cm
+    charge = edep * 1.0e9 / EV_PER_ELECTRON
+    tol = THROUGHGOING_LCOS_TOL * thickness_cm
     return (
-        hit_mask
-        & (track_len > 0.01)
-        & (charge_e >= min_charge_e)
-        & (np.abs(lcos - thickness_cm) <= tol)
+        mask_hit
+        & (track_len > THROUGHGOING_MIN_L3D_CM)
+        & (np.abs(lcos - thickness_cm) < tol)
+        & (charge >= min_charge_e)
     )
 
 
-def binomial_efficiency(n_hit: np.ndarray, n_tot: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    eff = np.zeros_like(n_tot, dtype=float)
-    err = np.zeros_like(n_tot, dtype=float)
-    mask = n_tot > 0
-    eff[mask] = n_hit[mask] / n_tot[mask]
-    err[mask] = np.sqrt(eff[mask] * (1.0 - eff[mask]) / n_tot[mask])
-    return eff, err
+def proportion_with_error(numerator: int, denominator: int) -> Tuple[float, float]:
+    if denominator <= 0:
+        return 0.0, 0.0
+    p = numerator / denominator
+    err = math.sqrt(p * (1.0 - p) / denominator)
+    return p, err
 
 
 def ratio_with_uncertainty(
     num: np.ndarray, den: np.ndarray, num_err: np.ndarray, den_err: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray]:
-    ratio = np.full_like(num, np.nan, dtype=float)
-    err = np.full_like(num, np.nan, dtype=float)
+    ratio = np.divide(num, den, out=np.full_like(num, np.nan, dtype=float), where=den > 0)
+    err = np.full_like(ratio, np.nan, dtype=float)
     mask = (den > 0) & (num > 0)
-    ratio[mask] = num[mask] / den[mask]
-    err[mask] = ratio[mask] * np.sqrt(
-        (num_err[mask] / num[mask]) ** 2 + (den_err[mask] / den[mask]) ** 2
-    )
+    if np.any(mask):
+        err[mask] = ratio[mask] * np.sqrt(
+            np.square(num_err[mask] / num[mask]) + np.square(den_err[mask] / den[mask])
+        )
     return ratio, err
 
 
-def auto_range(data: np.ndarray, pct: Tuple[float, float] = (1, 99)) -> Tuple[float, float]:
-    if data.size == 0:
-        return (0.0, 1.0)
-    lo, hi = np.percentile(data, pct)
-    if not np.isfinite(lo) or not np.isfinite(hi):
-        lo, hi = float(np.min(data)), float(np.max(data))
-    if hi <= lo:
-        hi = lo + 1.0
-    return float(lo), float(hi)
+def safe_binomial(success: np.ndarray, total: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    success = np.asarray(success, dtype=float)
+    total = np.asarray(total, dtype=float)
+    eff = np.divide(success, total, out=np.zeros_like(total, dtype=float), where=total > 0)
+    err = np.zeros_like(eff)
+    mask = total > 0
+    err[mask] = np.sqrt(np.clip(eff[mask] * (1.0 - eff[mask]) / total[mask], 0.0, None))
+    return eff, err
 
 
-def make_ratio_plot(
+def centers_from_edges(edges: np.ndarray) -> np.ndarray:
+    return 0.5 * (edges[:-1] + edges[1:])
+
+
+def positive_ylim(values: np.ndarray) -> float:
+    vals = values[np.isfinite(values) & (values > 0)]
+    if vals.size == 0:
+        return 0.1
+    return max(np.min(vals) * 0.8, 0.1)
+
+
+def make_ratio_series_plot(
     x: np.ndarray,
-    y_cad: np.ndarray,
     y_none: np.ndarray,
-    err_cad: np.ndarray,
+    y_cad: np.ndarray,
     err_none: np.ndarray,
+    err_cad: np.ndarray,
     xlabel: str,
     ylabel: str,
-    out_path: Path,
     title: str,
+    out_path: Path,
+    label_none: str,
+    label_cad: str,
 ) -> None:
     ratio, ratio_err = ratio_with_uncertainty(y_cad, y_none, err_cad, err_none)
     fig, (ax, axr) = plt.subplots(
-        2, 1, figsize=(7.0, 6.0), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
+        2, 1, figsize=(7.5, 6.5), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
     )
-    ax.errorbar(x, y_none, yerr=err_none, fmt="o", ms=4, label="none")
-    ax.errorbar(x, y_cad, yerr=err_cad, fmt="s", ms=4, label="cad")
+    ax.errorbar(x, y_none, yerr=err_none, fmt="o", ms=4, label=label_none)
+    ax.errorbar(x, y_cad, yerr=err_cad, fmt="s", ms=4, label=label_cad)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     ax.grid(alpha=0.3)
     ax.legend()
 
     axr.axhline(1.0, color="black", linewidth=1)
-    axr.errorbar(x, ratio, yerr=ratio_err, fmt="o", ms=4)
+    axr.errorbar(x, ratio, yerr=ratio_err, fmt="o", ms=4, color="tab:purple")
     axr.set_xlabel(xlabel)
     axr.set_ylabel("CAD/none")
     axr.grid(alpha=0.3)
@@ -145,48 +262,60 @@ def make_ratio_plot(
 
 
 def make_hist_ratio_plot(
-    cad_vals: np.ndarray,
-    none_vals: np.ndarray,
-    n_thrown_cad: int,
-    n_thrown_none: int,
-    bins: int,
+    data_none: np.ndarray,
+    data_cad: np.ndarray,
+    bins: np.ndarray,
+    norm_none: float,
+    norm_cad: float,
     xlabel: str,
     ylabel: str,
-    out_path: Path,
     title: str,
+    out_path: Path,
+    label_none: str,
+    label_cad: str,
+    logy: bool = False,
 ) -> None:
-    combined = np.concatenate([cad_vals, none_vals]) if cad_vals.size and none_vals.size else (
-        cad_vals if cad_vals.size else none_vals
+    fig, (ax, axr) = plt.subplots(
+        2, 1, figsize=(7.5, 6.5), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
     )
-    lo, hi = auto_range(combined)
-    counts_cad, edges = np.histogram(cad_vals, bins=bins, range=(lo, hi))
-    counts_none, _ = np.histogram(none_vals, bins=edges)
-    centers = 0.5 * (edges[:-1] + edges[1:])
+    if data_none.size == 0 and data_cad.size == 0:
+        ax.text(0.5, 0.5, "No entries", transform=ax.transAxes, ha="center", va="center")
+        axr.axis("off")
+        fig.tight_layout()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path)
+        plt.close(fig)
+        return
 
-    rate_cad = counts_cad / max(1, n_thrown_cad)
-    rate_none = counts_none / max(1, n_thrown_none)
-    err_cad = np.sqrt(counts_cad) / max(1, n_thrown_cad)
-    err_none = np.sqrt(counts_none) / max(1, n_thrown_none)
+    counts_none, edges = np.histogram(data_none, bins=bins)
+    counts_cad, _ = np.histogram(data_cad, bins=edges)
+    centers = centers_from_edges(edges)
+
+    rate_none = counts_none / max(norm_none, 1.0)
+    rate_cad = counts_cad / max(norm_cad, 1.0)
+    err_none = np.sqrt(counts_none) / max(norm_none, 1.0)
+    err_cad = np.sqrt(counts_cad) / max(norm_cad, 1.0)
 
     ratio, ratio_err = ratio_with_uncertainty(rate_cad, rate_none, err_cad, err_none)
 
-    fig, (ax, axr) = plt.subplots(
-        2, 1, figsize=(7.0, 6.0), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
-    )
-    ax.step(centers, rate_none, where="mid", label="none")
-    ax.step(centers, rate_cad, where="mid", label="cad")
+    ax.step(centers, rate_none, where="mid", label=label_none)
+    ax.step(centers, rate_cad, where="mid", label=label_cad)
     ax.errorbar(centers, rate_none, yerr=err_none, fmt="o", ms=3)
     ax.errorbar(centers, rate_cad, yerr=err_cad, fmt="s", ms=3)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     ax.grid(alpha=0.3)
+    if logy:
+        ax.set_yscale("log")
+        ax.set_ylim(bottom=positive_ylim(np.concatenate([rate_none, rate_cad])))
     ax.legend()
 
     axr.axhline(1.0, color="black", linewidth=1)
-    axr.errorbar(centers, ratio, yerr=ratio_err, fmt="o", ms=3)
+    axr.errorbar(centers, ratio, yerr=ratio_err, fmt="o", ms=3, color="tab:purple")
     axr.set_xlabel(xlabel)
     axr.set_ylabel("CAD/none")
     axr.grid(alpha=0.3)
+    ax.set_xlim(edges[0], edges[-1])
 
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -194,109 +323,410 @@ def make_hist_ratio_plot(
     plt.close(fig)
 
 
-def binned_mean(values: np.ndarray, bins: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    means = np.zeros(len(bins) - 1, dtype=float)
-    errs = np.zeros(len(bins) - 1, dtype=float)
-    for i in range(len(bins) - 1):
-        mask = (values[:, 0] >= bins[i]) & (values[:, 0] < bins[i + 1])
-        if not np.any(mask):
-            means[i] = float("nan")
-            errs[i] = float("nan")
-            continue
-        vals = values[mask][:, 1]
-        means[i] = float(np.mean(vals))
-        errs[i] = float(np.std(vals, ddof=1) / math.sqrt(vals.size)) if vals.size > 1 else 0.0
-    return means, errs
+def combined_percentile(values: Iterable[np.ndarray], pct: float) -> float:
+    merged = np.concatenate([np.asarray(v, dtype=float) for v in values if np.asarray(v).size])
+    if merged.size == 0:
+        return 0.0
+    return float(np.percentile(merged, pct))
 
 
-def make_binned_mean_ratio_plot(
-    cad_x: np.ndarray,
-    cad_y: np.ndarray,
-    none_x: np.ndarray,
-    none_y: np.ndarray,
-    bins: np.ndarray,
-    xlabel: str,
-    ylabel: str,
-    out_path: Path,
-    title: str,
-) -> None:
-    cad_vals = np.column_stack([cad_x, cad_y])
-    none_vals = np.column_stack([none_x, none_y])
-    cad_mean, cad_err = binned_mean(cad_vals, bins)
-    none_mean, none_err = binned_mean(none_vals, bins)
-    centers = 0.5 * (bins[:-1] + bins[1:])
-    ratio, ratio_err = ratio_with_uncertainty(cad_mean, none_mean, cad_err, none_err)
-
-    fig, (ax, axr) = plt.subplots(
-        2, 1, figsize=(7.0, 6.0), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
-    )
-    ax.errorbar(centers, none_mean, yerr=none_err, fmt="o", ms=4, label="none")
-    ax.errorbar(centers, cad_mean, yerr=cad_err, fmt="s", ms=4, label="cad")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.grid(alpha=0.3)
-    ax.legend()
-
-    axr.axhline(1.0, color="black", linewidth=1)
-    axr.errorbar(centers, ratio, yerr=ratio_err, fmt="o", ms=4)
-    axr.set_xlabel(xlabel)
-    axr.set_ylabel("CAD/none")
-    axr.grid(alpha=0.3)
-
-    fig.tight_layout()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path)
-    plt.close(fig)
+@dataclass
+class ModeData:
+    label: str
+    dir: Path
+    root_path: Optional[Path]
+    edep: np.ndarray
+    track: np.ndarray
+    cos_down: np.ndarray
+    n_steps: Optional[np.ndarray]
+    mask_hit: np.ndarray
+    mask_through: np.ndarray
+    charge: np.ndarray
+    lcos: np.ndarray
+    dedx_hits: np.ndarray
+    dedx_through: np.ndarray
+    n_thrown: int
+    n_hits: int
+    n_through: int
+    charge_p99_quality: Optional[float]
+    cutflow: Dict[str, int]
+    validation: Dict[str, float]
+    run_config: Dict
 
 
-def compute_summary(
-    events: Dict[str, np.ndarray],
-    cos_down: np.ndarray,
-    through_mask: np.ndarray,
-) -> Dict[str, float]:
-    n_events = len(events["EdepCCD"])
-    hit_mask = compute_hit_mask(events)
-    n_hits = int(np.sum(hit_mask))
-    hit_fraction = n_hits / n_events if n_events else 0.0
-    hit_err = math.sqrt(hit_fraction * (1.0 - hit_fraction) / n_events) if n_events else 0.0
-    track_len = np.asarray(events["trackLenCCD"])
-    edep_mev = np.asarray(events["EdepCCD"]) * 1000.0
-    through_edep = edep_mev[through_mask]
-    through_dedx = (
-        edep_mev[through_mask] / np.clip(track_len[through_mask], 1.0e-9, None)
-        if np.any(through_mask)
-        else np.asarray([])
-    )
-    summary = {
-        "n_events": float(n_events),
-        "n_hits": float(n_hits),
-        "hit_fraction": hit_fraction,
-        "hit_fraction_err": hit_err,
-        "through_edep_mean_mev": float(np.mean(through_edep)) if through_edep.size else 0.0,
-        "through_edep_sem_mev": float(np.std(through_edep, ddof=1) / math.sqrt(through_edep.size))
-        if through_edep.size > 1
-        else 0.0,
-        "through_dedx_mean_mev_per_cm": float(np.mean(through_dedx)) if through_dedx.size else 0.0,
-        "through_dedx_sem_mev_per_cm": float(np.std(through_dedx, ddof=1) / math.sqrt(through_dedx.size))
-        if through_dedx.size > 1
-        else 0.0,
-    }
-    return summary
+def load_mode_data(
+    label: str,
+    mode_dir: Path,
+    root_override: Optional[Path],
+    thickness_cm: float,
+    min_charge_e: float,
+) -> ModeData:
+    run_config = load_run_config(mode_dir)
+    root_path = root_override
+    if root_path is None and run_config.get("input"):
+        root_path = Path(run_config["input"])
 
+    cutflow = load_cutflow(mode_dir)
+    validation = load_validation_row(mode_dir)
+    charge_p99_quality = percentile_from_pixel_metrics(mode_dir, "charge")
 
-def write_comparison_summary(
-    path: Path, cad: Dict[str, float], none: Dict[str, float]
-) -> None:
-    rows: List[Dict[str, float]] = []
+    edep = np.array([])
+    track = np.array([])
+    cos_down = np.array([])
+    n_steps = None
+    mask_hit = np.array([], dtype=bool)
+    mask_through = np.array([], dtype=bool)
+    charge = np.array([])
+    lcos = np.array([])
+    dedx_hits = np.array([])
+    dedx_through = np.array([])
+    n_thrown = 0
+    n_hits = 0
+    n_through = 0
 
-    def add_metric(name: str, cad_val: float, cad_err: float, none_val: float, none_err: float) -> None:
-        ratio = cad_val / none_val if none_val else float("nan")
-        ratio_err = (
-            ratio * math.sqrt((cad_err / cad_val) ** 2 + (none_err / none_val) ** 2)
-            if cad_val and none_val
-            else float("nan")
+    if root_path and root_path.exists():
+        events = load_events(
+            root_path,
+            ["EdepCCD", "trackLenCCD", "thetaPri", "muonCosTheta", "nStepsCCD"],
         )
-        rows.append(
+        edep = np.asarray(events.get("EdepCCD", []), dtype=float)
+        track = np.asarray(events.get("trackLenCCD", []), dtype=float)
+        cos_down = compute_cos_down(events)
+        n_steps = np.asarray(events["nStepsCCD"], dtype=float) if "nStepsCCD" in events else None
+        n_thrown = len(edep)
+        mask_hit = compute_hit_mask(edep, track, n_steps)
+        mask_through = compute_throughgoing_mask(edep, track, cos_down, thickness_cm, min_charge_e, mask_hit)
+        charge = edep * 1.0e9 / EV_PER_ELECTRON
+        lcos = track * np.abs(cos_down)
+        dedx_hits = edep[mask_hit] * 1000.0 / np.clip(track[mask_hit], 1.0e-6, None)
+        dedx_through = edep[mask_through] * 1000.0 / np.clip(track[mask_through], 1.0e-6, None)
+        n_hits = int(np.sum(mask_hit))
+        n_through = int(np.sum(mask_through))
+    else:
+        print(f"[WARN] Missing merged ROOT for {label}; comparisons limited. Looking for {root_path}")
+
+    if not cutflow and n_thrown:
+        cutflow = {
+            "thrown": n_thrown,
+            "hits": n_hits,
+            "throughgoing": n_through,
+        }
+
+    return ModeData(
+        label=label,
+        dir=mode_dir,
+        root_path=root_path,
+        edep=edep,
+        track=track,
+        cos_down=cos_down,
+        n_steps=n_steps,
+        mask_hit=mask_hit,
+        mask_through=mask_through,
+        charge=charge,
+        lcos=lcos,
+        dedx_hits=dedx_hits,
+        dedx_through=dedx_through,
+        n_thrown=n_thrown,
+        n_hits=n_hits,
+        n_through=n_through,
+        charge_p99_quality=charge_p99_quality,
+        cutflow=cutflow,
+        validation=validation,
+        run_config=run_config,
+    )
+
+
+def build_comparison_plots(
+    none_mode: ModeData,
+    cad_mode: ModeData,
+    out_dir: Path,
+    thickness_cm: float,
+    label_none: str,
+    label_cad: str,
+    bins_cos: int,
+) -> List[Path]:
+    plots: List[Path] = []
+    norm_none_thrown = max(none_mode.n_thrown, 1)
+    norm_cad_thrown = max(cad_mode.n_thrown, 1)
+    norm_none_hits = max(none_mode.n_hits, 1)
+    norm_cad_hits = max(cad_mode.n_hits, 1)
+
+    bins_cos_edges = np.linspace(0.0, 1.0, bins_cos + 1)
+    centers_cos = centers_from_edges(bins_cos_edges)
+
+    # Hit efficiency vs cos(zenith)
+    none_tot, _ = np.histogram(none_mode.cos_down, bins=bins_cos_edges)
+    cad_tot, _ = np.histogram(cad_mode.cos_down, bins=bins_cos_edges)
+    none_hits_b, _ = np.histogram(none_mode.cos_down[none_mode.mask_hit], bins=bins_cos_edges)
+    cad_hits_b, _ = np.histogram(cad_mode.cos_down[cad_mode.mask_hit], bins=bins_cos_edges)
+    none_eff, none_eff_err = safe_binomial(none_hits_b, none_tot)
+    cad_eff, cad_eff_err = safe_binomial(cad_hits_b, cad_tot)
+    out_path = out_dir / "compare_hit_efficiency_vs_coszen.pdf"
+    make_ratio_series_plot(
+        centers_cos,
+        none_eff,
+        cad_eff,
+        none_eff_err,
+        cad_eff_err,
+        xlabel="cos(zenith) down",
+        ylabel="Hit efficiency",
+        title="Hit efficiency vs cos(zenith)",
+        out_path=out_path,
+        label_none=label_none,
+        label_cad=label_cad,
+    )
+    plots.append(out_path)
+
+    # Throughgoing fraction per thrown
+    none_through_b, _ = np.histogram(none_mode.cos_down[none_mode.mask_through], bins=bins_cos_edges)
+    cad_through_b, _ = np.histogram(cad_mode.cos_down[cad_mode.mask_through], bins=bins_cos_edges)
+    none_thr_frac, none_thr_err = safe_binomial(none_through_b, none_tot)
+    cad_thr_frac, cad_thr_err = safe_binomial(cad_through_b, cad_tot)
+    out_path = out_dir / "compare_through_fraction_per_thrown_vs_coszen.pdf"
+    make_ratio_series_plot(
+        centers_cos,
+        none_thr_frac,
+        cad_thr_frac,
+        none_thr_err,
+        cad_thr_err,
+        xlabel="cos(zenith) down",
+        ylabel="Throughgoing / thrown",
+        title="Throughgoing fraction per thrown",
+        out_path=out_path,
+        label_none=label_none,
+        label_cad=label_cad,
+    )
+    plots.append(out_path)
+
+    # Throughgoing fraction of hits
+    none_thr_hits_frac, none_thr_hits_err = safe_binomial(none_through_b, none_hits_b)
+    cad_thr_hits_frac, cad_thr_hits_err = safe_binomial(cad_through_b, cad_hits_b)
+    out_path = out_dir / "compare_through_fraction_of_hits_vs_coszen.pdf"
+    make_ratio_series_plot(
+        centers_cos,
+        none_thr_hits_frac,
+        cad_thr_hits_frac,
+        none_thr_hits_err,
+        cad_thr_hits_err,
+        xlabel="cos(zenith) down",
+        ylabel="Throughgoing / hits",
+        title="Throughgoing fraction of hits vs cos(zenith)",
+        out_path=out_path,
+        label_none=label_none,
+        label_cad=label_cad,
+    )
+    plots.append(out_path)
+
+    # Edep CCD core/tail (per thrown)
+    bins_edep_core = np.linspace(0.0, 0.0025, 100)
+    out_path = out_dir / "compare_edep_core.pdf"
+    make_hist_ratio_plot(
+        none_mode.edep[none_mode.mask_hit],
+        cad_mode.edep[cad_mode.mask_hit],
+        bins=bins_edep_core,
+        norm_none=norm_none_thrown,
+        norm_cad=norm_cad_thrown,
+        xlabel="Edep CCD [GeV]",
+        ylabel="Rate per thrown",
+        title="Edep CCD core (hits, per thrown)",
+        out_path=out_path,
+        label_none=label_none,
+        label_cad=label_cad,
+        logy=True,
+    )
+    plots.append(out_path)
+
+    bins_edep_tail = np.linspace(0.0, 0.04, 160)
+    out_path = out_dir / "compare_edep_tail.pdf"
+    make_hist_ratio_plot(
+        none_mode.edep[none_mode.mask_hit],
+        cad_mode.edep[cad_mode.mask_hit],
+        bins=bins_edep_tail,
+        norm_none=norm_none_thrown,
+        norm_cad=norm_cad_thrown,
+        xlabel="Edep CCD [GeV]",
+        ylabel="Rate per thrown",
+        title="Edep CCD tail (hits, per thrown)",
+        out_path=out_path,
+        label_none=label_none,
+        label_cad=label_cad,
+        logy=True,
+    )
+    plots.append(out_path)
+
+    # dE/dx core/tail (per hit)
+    bins_dedx_core = np.linspace(0.0, 25.0, 120)
+    out_path = out_dir / "compare_dedx_core.pdf"
+    make_hist_ratio_plot(
+        none_mode.dedx_hits,
+        cad_mode.dedx_hits,
+        bins=bins_dedx_core,
+        norm_none=norm_none_hits,
+        norm_cad=norm_cad_hits,
+        xlabel="dE/dx [MeV/cm]",
+        ylabel="Rate per hit",
+        title="dE/dx core (hits, per hit)",
+        out_path=out_path,
+        label_none=label_none,
+        label_cad=label_cad,
+        logy=False,
+    )
+    plots.append(out_path)
+
+    bins_dedx_tail = np.linspace(0.0, 400.0, 160)
+    out_path = out_dir / "compare_dedx_tail.pdf"
+    make_hist_ratio_plot(
+        none_mode.dedx_hits,
+        cad_mode.dedx_hits,
+        bins=bins_dedx_tail,
+        norm_none=norm_none_hits,
+        norm_cad=norm_cad_hits,
+        xlabel="dE/dx [MeV/cm]",
+        ylabel="Rate per hit",
+        title="dE/dx tail (hits, per hit)",
+        out_path=out_path,
+        label_none=label_none,
+        label_cad=label_cad,
+        logy=True,
+    )
+    plots.append(out_path)
+
+    # Lcos distribution (hits, per thrown)
+    lcos_combined_hi = max(
+        combined_percentile([none_mode.lcos[none_mode.mask_hit], cad_mode.lcos[cad_mode.mask_hit]], 99.5),
+        thickness_cm * 1.2 if thickness_cm > 0 else 0.1,
+    )
+    bins_lcos = np.linspace(0.0, lcos_combined_hi, 140)
+    out_path = out_dir / "compare_lcos_distribution.pdf"
+    make_hist_ratio_plot(
+        none_mode.lcos[none_mode.mask_hit],
+        cad_mode.lcos[cad_mode.mask_hit],
+        bins=bins_lcos,
+        norm_none=norm_none_thrown,
+        norm_cad=norm_cad_thrown,
+        xlabel="L*cos(zenith) [cm]",
+        ylabel="Rate per thrown",
+        title="Lcos distribution (hits, per thrown)",
+        out_path=out_path,
+        label_none=label_none,
+        label_cad=label_cad,
+        logy=True,
+    )
+    plots.append(out_path)
+
+    # Charge distributions (hits + throughgoing)
+    charge_hits_none = none_mode.charge[none_mode.mask_hit]
+    charge_hits_cad = cad_mode.charge[cad_mode.mask_hit]
+    charge_through_none = none_mode.charge[none_mode.mask_through]
+    charge_through_cad = cad_mode.charge[cad_mode.mask_through]
+
+    charge_core_hi = max(combined_percentile([charge_hits_none, charge_hits_cad], 99.0), 1.0)
+    bins_charge_core = np.linspace(0.0, charge_core_hi, 140)
+    out_path = out_dir / "compare_charge_hits_core.pdf"
+    make_hist_ratio_plot(
+        charge_hits_none,
+        charge_hits_cad,
+        bins=bins_charge_core,
+        norm_none=norm_none_thrown,
+        norm_cad=norm_cad_thrown,
+        xlabel="Cluster charge [e-]",
+        ylabel="Rate per thrown",
+        title="Charge distribution (hits, core)",
+        out_path=out_path,
+        label_none=label_none,
+        label_cad=label_cad,
+        logy=True,
+    )
+    plots.append(out_path)
+
+    charge_tail_hi = max(combined_percentile([charge_hits_none, charge_hits_cad], 99.9), charge_core_hi)
+    bins_charge_tail = np.linspace(0.0, charge_tail_hi, 160)
+    out_path = out_dir / "compare_charge_hits_tail.pdf"
+    make_hist_ratio_plot(
+        charge_hits_none,
+        charge_hits_cad,
+        bins=bins_charge_tail,
+        norm_none=norm_none_thrown,
+        norm_cad=norm_cad_thrown,
+        xlabel="Cluster charge [e-]",
+        ylabel="Rate per thrown",
+        title="Charge distribution (hits, tail)",
+        out_path=out_path,
+        label_none=label_none,
+        label_cad=label_cad,
+        logy=True,
+    )
+    plots.append(out_path)
+
+    if charge_through_none.size or charge_through_cad.size:
+        charge_thr_core_hi = max(combined_percentile([charge_through_none, charge_through_cad], 99.0), 1.0)
+        bins_charge_thr_core = np.linspace(0.0, charge_thr_core_hi, 120)
+        out_path = out_dir / "compare_charge_through_core.pdf"
+        make_hist_ratio_plot(
+            charge_through_none,
+            charge_through_cad,
+            bins=bins_charge_thr_core,
+            norm_none=norm_none_thrown,
+            norm_cad=norm_cad_thrown,
+            xlabel="Cluster charge [e-]",
+            ylabel="Rate per thrown",
+            title="Charge distribution (throughgoing, core)",
+            out_path=out_path,
+            label_none=label_none,
+            label_cad=label_cad,
+            logy=True,
+        )
+        plots.append(out_path)
+
+        charge_thr_tail_hi = max(combined_percentile([charge_through_none, charge_through_cad], 99.9), charge_thr_core_hi)
+        bins_charge_thr_tail = np.linspace(0.0, charge_thr_tail_hi, 150)
+        out_path = out_dir / "compare_charge_through_tail.pdf"
+        make_hist_ratio_plot(
+            charge_through_none,
+            charge_through_cad,
+            bins=bins_charge_thr_tail,
+            norm_none=norm_none_thrown,
+            norm_cad=norm_cad_thrown,
+            xlabel="Cluster charge [e-]",
+            ylabel="Rate per thrown",
+            title="Charge distribution (throughgoing, tail)",
+            out_path=out_path,
+            label_none=label_none,
+            label_cad=label_cad,
+            logy=True,
+        )
+        plots.append(out_path)
+
+    return plots
+
+
+def write_comparison_summary(path: Path, metrics: List[Dict[str, float]]) -> None:
+    fieldnames = ["metric", "cad_value", "cad_err", "none_value", "none_err", "ratio", "ratio_err"]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in metrics:
+            writer.writerow({k: row.get(k, "") for k in fieldnames})
+
+
+def build_metrics(
+    none_mode: ModeData,
+    cad_mode: ModeData,
+    charge_p99_hits_none: float,
+    charge_p99_hits_cad: float,
+    charge_p99_through_none: float,
+    charge_p99_through_cad: float,
+) -> List[Dict[str, float]]:
+    metrics: List[Dict[str, float]] = []
+
+    def add_metric(name: str, none_val: float, none_err: float, cad_val: float, cad_err: float) -> None:
+        ratio = cad_val / none_val if none_val else math.nan
+        ratio_err = math.nan
+        if cad_val and none_val:
+            ratio_err = ratio * math.sqrt(
+                (cad_err / cad_val) ** 2 + (none_err / none_val) ** 2 if cad_err or none_err else 0.0
+            )
+        metrics.append(
             {
                 "metric": name,
                 "cad_value": cad_val,
@@ -308,136 +738,195 @@ def write_comparison_summary(
             }
         )
 
-    add_metric(
-        "hit_fraction",
-        cad["hit_fraction"],
-        cad["hit_fraction_err"],
-        none["hit_fraction"],
-        none["hit_fraction_err"],
-    )
-    add_metric(
-        "through_edep_mean_mev",
-        cad["through_edep_mean_mev"],
-        cad["through_edep_sem_mev"],
-        none["through_edep_mean_mev"],
-        none["through_edep_sem_mev"],
-    )
-    add_metric(
-        "through_dedx_mean_mev_per_cm",
-        cad["through_dedx_mean_mev_per_cm"],
-        cad["through_dedx_sem_mev_per_cm"],
-        none["through_dedx_mean_mev_per_cm"],
-        none["through_dedx_sem_mev_per_cm"],
-    )
+    none_hit_frac, none_hit_err = proportion_with_error(none_mode.n_hits, none_mode.n_thrown)
+    cad_hit_frac, cad_hit_err = proportion_with_error(cad_mode.n_hits, cad_mode.n_thrown)
+    add_metric("hits_per_thrown", none_hit_frac, none_hit_err, cad_hit_frac, cad_hit_err)
 
-    header = "metric,cad_value,cad_err,none_value,none_err,ratio,ratio_err"
-    lines = [header]
-    for row in rows:
+    none_thr_frac, none_thr_err = proportion_with_error(none_mode.n_through, none_mode.n_thrown)
+    cad_thr_frac, cad_thr_err = proportion_with_error(cad_mode.n_through, cad_mode.n_thrown)
+    add_metric("through_per_thrown", none_thr_frac, none_thr_err, cad_thr_frac, cad_thr_err)
+
+    none_thr_hit_frac, none_thr_hit_err = proportion_with_error(none_mode.n_through, max(none_mode.n_hits, 1))
+    cad_thr_hit_frac, cad_thr_hit_err = proportion_with_error(cad_mode.n_through, max(cad_mode.n_hits, 1))
+    add_metric("through_fraction_of_hits", none_thr_hit_frac, none_thr_hit_err, cad_thr_hit_frac, cad_thr_hit_err)
+
+    add_metric("charge_p99_hits", charge_p99_hits_none, 0.0, charge_p99_hits_cad, 0.0)
+    add_metric("charge_p99_through", charge_p99_through_none, 0.0, charge_p99_through_cad, 0.0)
+
+    return metrics
+
+
+def write_markdown_summary(
+    path: Path,
+    tag: str,
+    config_info: Dict,
+    none_mode: ModeData,
+    cad_mode: ModeData,
+    metrics: List[Dict[str, float]],
+    compare_plots: List[Path],
+) -> None:
+    thrown_none = cad_mode.cutflow.get("thrown", None)  # type: ignore
+    thrown_cad = cad_mode.cutflow.get("thrown", None)
+    thrown_none = none_mode.cutflow.get("thrown", thrown_none)
+    thrown_cad = cad_mode.cutflow.get("thrown", thrown_cad)
+
+    lines: List[str] = []
+    lines.append(f"# CAD vs none summary ({tag})")
+    lines.append("")
+    lines.append("## Run config")
+    compare_base = compare_plots[0].parent if compare_plots else path.parent
+    cad_file = config_info.get("cad_file") or cad_mode.run_config.get("run_info", {}).get("macroPath", "")
+    geom_none = config_info.get("geometry", {}).get("none", "")
+    geom_cad = config_info.get("geometry", {}).get("cad", "")
+    lines.append(f"- tag: {tag}")
+    if thrown_none is not None:
+        lines.append(f"- thrown_none: {thrown_none}")
+    if thrown_cad is not None:
+        lines.append(f"- thrown_cad: {thrown_cad}")
+    if geom_none:
+        lines.append(f"- geometry_none: {geom_none}")
+    if geom_cad:
+        lines.append(f"- geometry_cad: {geom_cad}")
+    if cad_file:
+        lines.append(f"- cad_file: {cad_file}")
+    lines.append(f"- compare_dir: {compare_base}")
+    lines.append("")
+
+    lines.append("## Cutflow (counts)")
+    lines.append("| stage | none | cad |")
+    lines.append("| --- | --- | --- |")
+    stages = sorted(set(none_mode.cutflow.keys()) | set(cad_mode.cutflow.keys()))
+    for stage in stages:
         lines.append(
-            f"{row['metric']},{row['cad_value']:.6g},{row['cad_err']:.6g},"
-            f"{row['none_value']:.6g},{row['none_err']:.6g},"
-            f"{row['ratio']:.6g},{row['ratio_err']:.6g}"
+            f"| {stage} | {none_mode.cutflow.get(stage, 0)} | {cad_mode.cutflow.get(stage, 0)} |"
         )
+    lines.append("")
+
+    lines.append("## Headline effects")
+    lines.append("| metric | none | cad | ratio |")
+    lines.append("| --- | --- | --- | --- |")
+    for row in metrics:
+        none_val = row["none_value"]
+        cad_val = row["cad_value"]
+        ratio = row["ratio"]
+        none_err = row["none_err"]
+        cad_err = row["cad_err"]
+        ratio_err = row["ratio_err"]
+
+        def fmt(val: float, err: float) -> str:
+            if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+                return "nan"
+            return f"{val:.6g} +/- {err:.2g}"
+
+        lines.append(
+            f"| {row['metric']} | {fmt(none_val, none_err)} | {fmt(cad_val, cad_err)} | {fmt(ratio, ratio_err)} |"
+        )
+    lines.append("")
+
+    lines.append("## Key plots")
+    for plot in sorted(compare_plots):
+        rel = plot
+        if plot.is_absolute():
+            try:
+                rel = plot.relative_to(path.parent.parent)
+            except ValueError:
+                rel = plot
+        lines.append(f"- `{rel}`")
+    lines.append("")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Compare CAD vs none paper outputs with ratio panels.")
+    parser.add_argument("--cad", required=True, help="CAD mode output folder (from make_paper_outputs).")
+    parser.add_argument("--none", dest="none", required=True, help="None mode output folder.")
+    parser.add_argument("--out", required=True, help="Output folder for comparison plots.")
+    parser.add_argument("--cad-root", dest="cad_root", default=None, help="Optional override merged ROOT for CAD.")
+    parser.add_argument("--none-root", dest="none_root", default=None, help="Optional override merged ROOT for none.")
+    parser.add_argument("--min-charge-e", type=float, default=1.0e4, help="Min charge for throughgoing selection.")
+    parser.add_argument("--thickness-microns", type=float, default=725.0, help="CCD thickness in microns.")
+    parser.add_argument("--label-none", default="none", help="Legend label for none mode.")
+    parser.add_argument("--label-cad", default="CAD (steel+copper)", help="Legend label for CAD mode.")
+    parser.add_argument("--bins-cos", type=int, default=COS_BINS_DEFAULT, help="Bins for cos(zenith) profiles.")
+    parser.add_argument("--summary", default=None, help="Optional markdown summary output path.")
+    parser.add_argument("--tag", default=None, help="Tag name for summaries (defaults to out folder name).")
+    parser.add_argument("--config", default=None, help="Optional YAML config to include in summary.")
+    return parser.parse_args()
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compare CAD vs none ROOT outputs.")
-    parser.add_argument("--cad", required=True, help="CAD merged ROOT file.")
-    parser.add_argument("--none", required=True, help="None merged ROOT file.")
-    parser.add_argument("--out-dir", required=True, help="Output directory for plots.")
-    parser.add_argument("--min-charge-e", type=float, default=1.0e4, help="Min charge for throughgoing.")
-    parser.add_argument("--thickness-microns", type=float, default=725.0, help="CCD thickness.")
-    parser.add_argument("--bins", type=int, default=60, help="Bins for spectra.")
-    args = parser.parse_args()
-
-    cad_path = Path(args.cad)
-    none_path = Path(args.none)
-    out_dir = Path(args.out_dir)
-
-    cad_events = load_events(cad_path)
-    none_events = load_events(none_path)
-
+    args = parse_args()
+    out_dir = ensure_dir(Path(args.out))
     thickness_cm = args.thickness_microns * 1.0e-4
-    cad_cos = compute_cos_down(cad_events)
-    none_cos = compute_cos_down(none_events)
 
-    cad_through = compute_throughgoing_mask(cad_events, cad_cos, thickness_cm, args.min_charge_e)
-    none_through = compute_throughgoing_mask(none_events, none_cos, thickness_cm, args.min_charge_e)
-
-    # Hit efficiency vs cos(zenith)
-    bins_cos = np.linspace(0.0, 1.0, 11)
-    cad_tot, _ = np.histogram(cad_cos, bins=bins_cos)
-    cad_hit, _ = np.histogram(cad_cos[compute_hit_mask(cad_events)], bins=bins_cos)
-    none_tot, _ = np.histogram(none_cos, bins=bins_cos)
-    none_hit, _ = np.histogram(none_cos[compute_hit_mask(none_events)], bins=bins_cos)
-    cad_eff, cad_err = binomial_efficiency(cad_hit, cad_tot)
-    none_eff, none_err = binomial_efficiency(none_hit, none_tot)
-    centers_cos = 0.5 * (bins_cos[:-1] + bins_cos[1:])
-
-    make_ratio_plot(
-        centers_cos,
-        cad_eff,
-        none_eff,
-        cad_err,
-        none_err,
-        xlabel="cos(zenith) down",
-        ylabel="Hit efficiency",
-        out_path=out_dir / "cad_vs_none_hit_efficiency_vs_coszen.pdf",
-        title="Hit efficiency vs cos(zenith)",
+    none_mode = load_mode_data(
+        args.label_none,
+        Path(args.none),
+        Path(args.none_root) if args.none_root else None,
+        thickness_cm,
+        args.min_charge_e,
+    )
+    cad_mode = load_mode_data(
+        args.label_cad,
+        Path(args.cad),
+        Path(args.cad_root) if args.cad_root else None,
+        thickness_cm,
+        args.min_charge_e,
     )
 
-    # Edep CCD throughgoing
-    cad_edep_mev = np.asarray(cad_events["EdepCCD"])[cad_through] * 1000.0
-    none_edep_mev = np.asarray(none_events["EdepCCD"])[none_through] * 1000.0
-    make_hist_ratio_plot(
-        cad_edep_mev,
-        none_edep_mev,
-        n_thrown_cad=len(cad_events["EdepCCD"]),
-        n_thrown_none=len(none_events["EdepCCD"]),
-        bins=args.bins,
-        xlabel="Edep CCD [MeV]",
-        ylabel="Rate per thrown",
-        out_path=out_dir / "cad_vs_none_edep_ccd_throughgoing.pdf",
-        title="Throughgoing Edep CCD",
+    compare_plots = build_comparison_plots(
+        none_mode,
+        cad_mode,
+        out_dir,
+        thickness_cm,
+        args.label_none,
+        args.label_cad,
+        bins_cos=args.bins_cos,
     )
 
-    # dEdx throughgoing
-    cad_track = np.asarray(cad_events["trackLenCCD"])[cad_through]
-    none_track = np.asarray(none_events["trackLenCCD"])[none_through]
-    cad_dedx = cad_edep_mev / np.clip(cad_track, 1.0e-9, None)
-    none_dedx = none_edep_mev / np.clip(none_track, 1.0e-9, None)
-    make_hist_ratio_plot(
-        cad_dedx,
-        none_dedx,
-        n_thrown_cad=len(cad_events["EdepCCD"]),
-        n_thrown_none=len(none_events["EdepCCD"]),
-        bins=args.bins,
-        xlabel="dE/dx [MeV/cm]",
-        ylabel="Rate per thrown",
-        out_path=out_dir / "cad_vs_none_dedx_throughgoing.pdf",
-        title="Throughgoing dE/dx",
+    # Tail metrics from pixel metrics if available; fallback to event charges.
+    charge_p99_hits_none = (
+        none_mode.charge_p99_quality
+        if none_mode.charge_p99_quality is not None
+        else combined_percentile([none_mode.charge[none_mode.mask_hit]], 99.0)
     )
-
-    # Charge vs coszen (throughgoing)
-    cad_charge = np.asarray(cad_events["EdepCCD"])[cad_through] * 1.0e9 / EV_PER_ELECTRON
-    none_charge = np.asarray(none_events["EdepCCD"])[none_through] * 1.0e9 / EV_PER_ELECTRON
-    make_binned_mean_ratio_plot(
-        cad_cos[cad_through],
-        cad_charge,
-        none_cos[none_through],
-        none_charge,
-        bins=bins_cos,
-        xlabel="cos(zenith) down",
-        ylabel="Mean charge [e-]",
-        out_path=out_dir / "cad_vs_none_charge_vs_coszen_throughgoing.pdf",
-        title="Throughgoing charge vs cos(zenith)",
+    charge_p99_hits_cad = (
+        cad_mode.charge_p99_quality
+        if cad_mode.charge_p99_quality is not None
+        else combined_percentile([cad_mode.charge[cad_mode.mask_hit]], 99.0)
     )
+    charge_p99_through_none = combined_percentile([none_mode.charge[none_mode.mask_through]], 99.0)
+    charge_p99_through_cad = combined_percentile([cad_mode.charge[cad_mode.mask_through]], 99.0)
 
-    # Summary CSV for markdown synthesis
-    cad_summary = compute_summary(cad_events, cad_cos, cad_through)
-    none_summary = compute_summary(none_events, none_cos, none_through)
-    write_comparison_summary(out_dir / "comparison_summary.csv", cad_summary, none_summary)
+    metrics = build_metrics(
+        none_mode,
+        cad_mode,
+        charge_p99_hits_none,
+        charge_p99_hits_cad,
+        charge_p99_through_none,
+        charge_p99_through_cad,
+    )
+    write_comparison_summary(out_dir / "comparison_summary.csv", metrics)
+
+    if args.summary:
+        config_info: Dict = {}
+        if args.config and Path(args.config).exists() and yaml:
+            try:
+                config_info = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
+            except Exception:
+                config_info = {}
+        tag = args.tag or out_dir.parent.name
+        write_markdown_summary(
+            Path(args.summary),
+            tag,
+            config_info,
+            none_mode,
+            cad_mode,
+            metrics,
+            compare_plots,
+        )
 
     return 0
 

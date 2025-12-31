@@ -147,34 +147,43 @@ def run_make_paper_outputs(
 
 def run_compare_modes(
     python_exe: str,
-    cad_root: Path,
-    none_root: Path,
+    cad_dir: Path,
+    none_dir: Path,
     out_dir: Path,
     analysis_cfg: Dict,
     dry_run: bool,
     resume: bool,
+    summary_path: Path | None = None,
+    config_path: Path | None = None,
+    tag: str | None = None,
 ) -> None:
     must_have = [
-        out_dir / "cad_vs_none_hit_efficiency_vs_coszen.pdf",
-        out_dir / "cad_vs_none_edep_ccd_throughgoing.pdf",
-        out_dir / "cad_vs_none_dedx_throughgoing.pdf",
+        out_dir / "compare_hit_efficiency_vs_coszen.pdf",
+        out_dir / "compare_through_fraction_per_thrown_vs_coszen.pdf",
+        out_dir / "compare_edep_core.pdf",
     ]
-    if resume and all(p.exists() for p in must_have):
+    if resume and all(p.exists() for p in must_have) and (summary_path is None or summary_path.exists()):
         return
     cmd = [
         python_exe,
         "analysis/compare_modes.py",
         "--cad",
-        str(cad_root),
+        str(cad_dir),
         "--none",
-        str(none_root),
-        "--out-dir",
+        str(none_dir),
+        "--out",
         str(out_dir),
         "--min-charge-e",
         str(analysis_cfg.get("min_charge_e", 1.0e4)),
         "--thickness-microns",
         str(analysis_cfg.get("thickness_microns", 725)),
     ]
+    if summary_path is not None:
+        cmd.extend(["--summary", str(summary_path)])
+    if config_path is not None:
+        cmd.extend(["--config", str(config_path)])
+    if tag is not None:
+        cmd.extend(["--tag", tag])
     run_cmd(cmd, dry_run)
 
 
@@ -236,9 +245,9 @@ def check_sanity(
                 raise SystemExit(f"Sanity fail: {label} Lcos median out of bounds: {median}")
 
     must_have = [
-        compare_dir / "cad_vs_none_hit_efficiency_vs_coszen.pdf",
-        compare_dir / "cad_vs_none_edep_ccd_throughgoing.pdf",
-        compare_dir / "cad_vs_none_dedx_throughgoing.pdf",
+        compare_dir / "compare_hit_efficiency_vs_coszen.pdf",
+        compare_dir / "compare_through_fraction_per_thrown_vs_coszen.pdf",
+        compare_dir / "compare_edep_core.pdf",
     ]
     for path in must_have:
         if not path.exists():
@@ -370,9 +379,11 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="Print commands only.")
     parser.add_argument("--sanity-only", action="store_true", help="Run sanity gate only.")
     parser.add_argument("--skip-sanity", action="store_true", help="Skip sanity gate.")
+    parser.add_argument("--only-compare", action="store_true", help="Regenerate analysis/compare only (no simulation).")
     args = parser.parse_args()
 
-    config = load_yaml(resolve_path(args.config))
+    config_path = resolve_path(args.config)
+    config = load_yaml(config_path)
     if os.environ.get("SIMCCD_EXE"):
         config["exe"] = os.environ["SIMCCD_EXE"]
     if args.tag:
@@ -417,6 +428,33 @@ def main() -> int:
 
     thickness_cm = float(analysis_cfg.get("thickness_microns", 725)) * 1.0e-4
 
+    if args.only_compare:
+        none_root = out_root / "none" / "merged.root"
+        cad_root = out_root / "cad" / "merged.root"
+        if not none_root.exists() or not cad_root.exists():
+            raise SystemExit(f"--only-compare requested but merged roots missing: {none_root}, {cad_root}")
+        run_make_paper_outputs(
+            python_exe, none_root, paper_root, "none", analysis_cfg, args.dry_run, resume=False
+        )
+        run_make_paper_outputs(
+            python_exe, cad_root, paper_root, "cad", analysis_cfg, args.dry_run, resume=False
+        )
+        compare_dir = paper_root / "compare"
+        summary_path = REPO_ROOT / f"docs/cad_vs_none_summary_{tag}.md"
+        run_compare_modes(
+            python_exe,
+            cad_dir=paper_root / "cad",
+            none_dir=paper_root / "none",
+            out_dir=compare_dir,
+            analysis_cfg=analysis_cfg,
+            dry_run=args.dry_run,
+            resume=False,
+            summary_path=summary_path,
+            config_path=config_path,
+            tag=tag,
+        )
+        return 0
+
     # Sanity gate
     if not args.skip_sanity:
         sanity_tag = f"{tag}_sanity"
@@ -452,7 +490,16 @@ def main() -> int:
 
         compare_dir = sanity_paper_root / "compare"
         run_compare_modes(
-            python_exe, cad_root, none_root, compare_dir, analysis_cfg, args.dry_run, resume
+            python_exe,
+            cad_dir=sanity_paper_root / "cad",
+            none_dir=sanity_paper_root / "none",
+            out_dir=compare_dir,
+            analysis_cfg=analysis_cfg,
+            dry_run=args.dry_run,
+            resume=resume,
+            summary_path=REPO_ROOT / f"docs/cad_vs_none_summary_{tag}_sanity.md",
+            config_path=config_path,
+            tag=f"{tag}_sanity",
         )
 
         if not args.dry_run:
@@ -469,19 +516,6 @@ def main() -> int:
                 cad_val,
                 compare_dir,
                 thickness_cm,
-            )
-
-            summary_path = REPO_ROOT / f"docs/cad_vs_none_summary_{tag}_sanity.md"
-            compare_summary = compare_dir / "comparison_summary.csv"
-            write_summary(
-                summary_path,
-                f"{tag} (sanity)",
-                config,
-                sanity_meta,
-                none_cutflow,
-                cad_cutflow,
-                compare_dir,
-                compare_summary,
             )
 
         if args.sanity_only:
@@ -512,23 +546,19 @@ def main() -> int:
     run_make_paper_outputs(python_exe, cad_root, paper_root, "cad", analysis_cfg, args.dry_run, resume)
 
     compare_dir = paper_root / "compare"
-    run_compare_modes(python_exe, cad_root, none_root, compare_dir, analysis_cfg, args.dry_run, resume)
-
-    if not args.dry_run:
-        summary_path = REPO_ROOT / f"docs/cad_vs_none_summary_{tag}.md"
-        none_cutflow = paper_root / "none" / "tables" / "cutflow.csv"
-        cad_cutflow = paper_root / "cad" / "tables" / "cutflow.csv"
-        compare_summary = compare_dir / "comparison_summary.csv"
-        write_summary(
-            summary_path,
-            tag,
-            config,
-            prod_meta,
-            none_cutflow,
-            cad_cutflow,
-            compare_dir,
-            compare_summary,
-        )
+    summary_path = REPO_ROOT / f"docs/cad_vs_none_summary_{tag}.md"
+    run_compare_modes(
+        python_exe,
+        cad_dir=paper_root / "cad",
+        none_dir=paper_root / "none",
+        out_dir=compare_dir,
+        analysis_cfg=analysis_cfg,
+        dry_run=args.dry_run,
+        resume=resume,
+        summary_path=summary_path,
+        config_path=config_path,
+        tag=tag,
+    )
 
     return 0
 

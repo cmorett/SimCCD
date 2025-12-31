@@ -21,6 +21,7 @@ Key flags:
 - `--skip-sanity`: skip the sanity gate and go straight to production.
 - `--resume`: skip completed batches and existing analysis outputs.
 - `--dry-run`: print commands only (no files created).
+- `--only-compare`: reuse existing merged roots and regenerate paper outputs + compare plots only.
 
 ## Sanity gate (automatic)
 
@@ -49,6 +50,22 @@ After sanity passes, production proceeds:
 - paper outputs in `paper_outputs/<tag>/none/` and `paper_outputs/<tag>/cad/`
 - comparison plots in `paper_outputs/<tag>/compare/`
 - summary in `docs/cad_vs_none_summary_<tag>.md`
+
+Core/tail plot files (per mode) for paper readability:
+
+- `fig_edep_ccd_core.pdf`, `fig_edep_ccd_tail.pdf`
+- `fig_dEdx_core.pdf`, `fig_dEdx_tail.pdf`
+- `fig_charge_vs_coszen.pdf` (core y-range) and `fig_charge_vs_coszen_tail.pdf`
+
+Compare folder highlights (`paper_outputs/<tag>/compare/`):
+
+- `compare_hit_efficiency_vs_coszen.pdf`
+- `compare_through_fraction_per_thrown_vs_coszen.pdf`
+- `compare_through_fraction_of_hits_vs_coszen.pdf`
+- `compare_edep_core.pdf`, `compare_edep_tail.pdf`
+- `compare_dedx_core.pdf`, `compare_dedx_tail.pdf`
+- `compare_lcos_distribution.pdf`
+- `compare_charge_hits_core.pdf`, `compare_charge_hits_tail.pdf`, plus throughgoing variants when available
 
 ## Output layout
 

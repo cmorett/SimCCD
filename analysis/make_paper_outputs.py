@@ -16,6 +16,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.colors as mcolors  # noqa: E402
 import numpy as np  # noqa: E402
 
 try:
@@ -68,7 +69,8 @@ def get_field(events: Dict[str, np.ndarray], name: str, default=None):
 
 
 def basic_stats(values: np.ndarray) -> Dict[str, float]:
-    vals = np.asarray(values)
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
     if vals.size == 0:
         return {k: 0.0 for k in ["mean", "median", "rms", "p05", "p16", "p50", "p84", "p95"]}
     return {
@@ -81,6 +83,20 @@ def basic_stats(values: np.ndarray) -> Dict[str, float]:
         "p84": float(np.percentile(vals, 84)),
         "p95": float(np.percentile(vals, 95)),
     }
+
+
+def nan_stats(values: np.ndarray, percentiles: Sequence[float]) -> Dict[str, float]:
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        out = {"mean": 0.0, "median": 0.0}
+        for p in percentiles:
+            out[f"p{int(p):02d}"] = 0.0
+        return out
+    out = {"mean": float(np.mean(vals)), "median": float(np.median(vals))}
+    for p in percentiles:
+        out[f"p{int(p):02d}"] = float(np.percentile(vals, p))
+    return out
 
 
 def percentile_limits(data: np.ndarray, p_lo: float = 1.0, p_hi: float = 99.0):
@@ -752,6 +768,11 @@ def main():
         & charge_mask
     )
 
+    edep_ccd_hits = np.where(mask_hit, edep_ccd, np.nan)
+    edep_ccd_through = np.where(mask_throughgoing, edep_ccd, np.nan)
+    track_len_hits = np.where(mask_hit, track_len_ccd, np.nan)
+    track_len_through = np.where(mask_throughgoing, track_len_ccd, np.nan)
+
     energy_pri = np.asarray(events["EevtPri"])
     energy_hits = energy_pri[mask_hit]
 
@@ -909,6 +930,37 @@ def main():
     fig.savefig(plots_dir / "fig_edep_ccd.pdf")
     plt.close(fig)
 
+    edep_hits = edep_ccd[mask_hit]
+    if edep_hits.size:
+        fig, ax = plt.subplots()
+        bins_core = np.linspace(0.0, 0.0025, 120)
+        counts, _, _ = ax.hist(edep_hits, bins=bins_core, histtype="step", lw=2, label="Hits")
+        ax.set_xlabel("Edep CCD [GeV]")
+        ax.set_ylabel("Events")
+        ax.set_xlim(0.0, 0.0025)
+        ax.set_title("Edep CCD (core)")
+        if np.any(counts > 0):
+            ax.set_ylim(bottom=max(np.min(counts[counts > 0]) * 0.8, 0.1))
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(plots_dir / "fig_edep_ccd_core.pdf")
+        plt.close(fig)
+
+        fig, ax = plt.subplots()
+        bins_tail = np.linspace(0.0, 0.04, 160)
+        counts_tail, _, _ = ax.hist(edep_hits, bins=bins_tail, histtype="step", lw=2, label="Hits")
+        ax.set_xlabel("Edep CCD [GeV]")
+        ax.set_ylabel("Events")
+        ax.set_xlim(0.0, 0.04)
+        ax.set_title("Edep CCD (tail)")
+        if np.any(counts_tail > 0):
+            ax.set_ylim(bottom=max(np.min(counts_tail[counts_tail > 0]) * 0.8, 0.1))
+        ax.set_yscale("log")
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(plots_dir / "fig_edep_ccd_tail.pdf")
+        plt.close(fig)
+
     fig, ax = plt.subplots()
     make_hist1d(
         ax,
@@ -1027,8 +1079,8 @@ def main():
             f"[dEdx] median={dedx_p[50]:.2f} MeV/cm, p84={dedx_p[84]:.2f}, p95={dedx_p[95]:.2f}, "
             f"p99={dedx_p[99]:.2f}, p99.9={dedx_p[99.9]:.2f}"
         )
-        hi_zoom = min(max(dedx_p[99], 5.0), 30.0)
-        hi_tail = max(dedx_p[99.9], hi_zoom)
+        hi_zoom = 25.0
+        hi_tail = min(400.0, max(dedx_p[99.9], 60.0))
 
         fig, ax = plt.subplots()
         ax.hist(dedx_all, bins=120, histtype="step", lw=2, label="Hits")
@@ -1045,23 +1097,28 @@ def main():
         plt.close(fig)
 
         fig, ax = plt.subplots()
-        ax.hist(dedx_plot, bins=100, range=(0, hi_zoom), histtype="step", lw=2, label="trackLen>0.01 cm")
+        ax.hist(dedx_plot, bins=120, range=(0, hi_zoom), histtype="step", lw=2, label="trackLen>0.01 cm")
         ax.set_xlabel("dE/dx [MeV/cm]")
         ax.set_ylabel("Events")
         ax.set_xlim(0, hi_zoom)
-        ax.set_title("dE/dx = Edep/trackLen (hits, zoom)")
+        ax.set_title("dE/dx = Edep/trackLen (hits, core)")
         ax.legend()
         fig.tight_layout()
         fig.savefig(plots_dir / "fig_dEdx.pdf")
+        fig.savefig(plots_dir / "fig_dEdx_core.pdf")
         plt.close(fig)
 
         fig, ax = plt.subplots()
-        ax.hist(dedx_plot, bins=100, range=(0, hi_tail), histtype="step", lw=2, label="trackLen>0.01 cm")
+        counts_tail, _, _ = ax.hist(
+            dedx_plot, bins=140, range=(0, hi_tail), histtype="step", lw=2, label="trackLen>0.01 cm"
+        )
         ax.set_xlabel("dE/dx [MeV/cm]")
         ax.set_ylabel("Events")
         ax.set_xlim(0, hi_tail)
         ax.set_yscale("log")
         ax.set_title("dE/dx tail (hits, log-y)")
+        if np.any(counts_tail > 0):
+            ax.set_ylim(bottom=max(np.min(counts_tail[counts_tail > 0]) * 0.8, 0.1))
         ax.legend()
         fig.tight_layout()
         fig.savefig(plots_dir / "fig_dEdx_tail.pdf")
@@ -1214,12 +1271,33 @@ def main():
                 valid_t = counts_t > 0
                 if np.any(valid_t):
                     ax.plot(centers_t[valid_t], means_t[valid_t], color="orange", lw=1.5, linestyle="--", label="Throughgoing")
+            charge_core_source = charge[through_metric] if np.any(through_metric) else charge
+            if charge_core_source.size:
+                ymax = float(np.percentile(charge_core_source, 99))
+                ax.set_ylim(0.0, ymax * 1.05)
             ax.legend()
             ax.set_xlabel("cos_{zenith}^{down}")
             ax.set_ylabel("Cluster charge [e-]")
-            ax.set_title("Cluster charge vs cos(zenith)")
+            ax.set_title("Cluster charge vs cos(zenith) (core)")
             fig.tight_layout()
             fig.savefig(plots_dir / "fig_charge_vs_coszen.pdf")
+            plt.close(fig)
+
+            fig, ax = plt.subplots()
+            norm = None
+            charge_counts, xedges, yedges = np.histogram2d(
+                cos_metric, charge, bins=[40, 60]
+            )
+            finite = charge_counts[charge_counts > 0]
+            if finite.size and (np.max(finite) / np.min(finite)) > 30:
+                norm = mcolors.LogNorm()
+            h_tail = ax.hist2d(cos_metric, charge, bins=[xedges, yedges], cmap="viridis", norm=norm)
+            plt.colorbar(h_tail[3], ax=ax)
+            ax.set_xlabel("cos_{zenith}^{down}")
+            ax.set_ylabel("Cluster charge [e-]")
+            ax.set_title("Cluster charge vs cos(zenith) (tail)")
+            fig.tight_layout()
+            fig.savefig(plots_dir / "fig_charge_vs_coszen_tail.pdf")
             plt.close(fig)
 
     dedx_mean_val = float(np.mean(dedx_all)) if dedx_all.size else 0.0
@@ -1278,9 +1356,25 @@ def main():
         validation_summary["cfg_sourcePlaneLx_cm"] = float(np.mean(cfg_plane[1]))
     if cfg_plane[2] is not None:
         validation_summary["cfg_sourcePlaneLy_cm"] = float(np.mean(cfg_plane[2]))
-    validation_summary.update({f"energy_{k}": v for k, v in basic_stats(events["EevtPri"]).items()})
-    validation_summary.update({f"EdepCCD_{k}": v for k, v in basic_stats(events["EdepCCD"]).items()})
-    validation_summary.update({f"trackLenCCD_{k}": v for k, v in basic_stats(events["trackLenCCD"]).items()})
+    energy_stats = basic_stats(events["EevtPri"])
+    edep_stats_hits = basic_stats(edep_ccd_hits)
+    track_stats_hits = basic_stats(track_len_hits)
+    edep_hits_percentiles = nan_stats(edep_ccd_hits, [16, 50, 84, 95, 99])
+    edep_through_percentiles = nan_stats(edep_ccd_through, [16, 50, 84, 95, 99])
+    track_hits_percentiles = nan_stats(track_len_hits, [16, 50, 84, 95])
+    track_through_percentiles = nan_stats(track_len_through, [16, 50, 84, 95])
+
+    validation_summary.update({f"energy_{k}": v for k, v in energy_stats.items()})
+    validation_summary.update({f"EdepCCD_{k}": v for k, v in edep_stats_hits.items()})
+    validation_summary.update({f"trackLenCCD_{k}": v for k, v in track_stats_hits.items()})
+    for prefix, stats_dict, keys in [
+        ("EdepCCD_hits", edep_hits_percentiles, ("mean", "median", "p16", "p84", "p95", "p99")),
+        ("EdepCCD_through", edep_through_percentiles, ("mean", "median", "p16", "p84", "p95", "p99")),
+        ("trackLenCCD_hits", track_hits_percentiles, ("mean", "median", "p16", "p84", "p95")),
+        ("trackLenCCD_through", track_through_percentiles, ("mean", "median", "p16", "p84", "p95")),
+    ]:
+        for key in keys:
+            validation_summary[f"{prefix}_{key}"] = float(stats_dict.get(key, 0.0))
     validation_summary["trackLenCCD_min_hits_cm"] = track_len_min_cm
     validation_summary["trackLenCCD_vert_median_cm"] = track_len_vert_median
     validation_summary["trackLenCCD_vert_peak_cm"] = track_len_vert_peak
