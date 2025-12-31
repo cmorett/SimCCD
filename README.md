@@ -27,6 +27,11 @@ main/build/Release/b02_executable.exe --no-vis --cad-mode merged main/macros/run
 main/build/Release/b02_executable.exe --no-vis --geometry primitive main/macros/run_without_cad.mac
 ```
 
+## Outputs and artifacts
+- `outputs/` holds run products (merged ROOTs, logs, WRL dumps) and is git-ignored; rerun the pipelines to regenerate.
+- `paper_outputs/` contains paper-ready plots/tables and is git-ignored; regenerate via the analysis scripts.
+- Use `artifacts/` to stash large local bundles you do not want in commits (ROOT snapshots, SLURM logs, zip bundles).
+
 ## Macros
 - `main/macros/geom_check.mac` – `/run/initialize` + `/geometry/test/run` for quick geometry validation.
 - `main/macros/run_with_cad.mac` – production macro for CAD.

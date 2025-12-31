@@ -1,7 +1,37 @@
-build/
-paper_outputs/
-cad_run_oldsample.root
-outputs/ephemeral/
-run/auto/
-outputs/parallel_logs/
-outputs/*.log
+# Build artifacts
+/build/
+/build-msvc/
+/build*/
+/main/build/
+/main/build-msvc/
+/main/build*/
+
+# Python environments and caches
+/.venv/
+/.venv*/
+/**/__pycache__/
+/**/*.py[cod]
+
+# Generated outputs and logs
+/outputs/*
+!/outputs/README.md
+/outputs/parallel_logs/
+/outputs/ephemeral/
+/outputs/*.log
+/paper_outputs/*
+!/paper_outputs/README.md
+/run/logs/
+/run/auto/
+/run/*.log
+
+# Local artifact stash (kept out of git but available locally)
+/artifacts/*
+!/artifacts/README.md
+
+# Large/generated files at repo root
+/*.root
+/*.pdf
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
