@@ -4,9 +4,6 @@
 - tag: cad_vs_none_prod_v1
 - thrown_none: 2000
 - thrown_cad: 2000
-- geometry_none: none
-- geometry_cad: tessellated
-- cad_file: main/assets/cad/new_assembly_cleaned_assimp.dae
 - compare_dir: paper_outputs\cad_vs_none_prod_v1\compare
 
 ## Cutflow (counts)

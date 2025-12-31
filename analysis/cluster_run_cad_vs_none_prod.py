@@ -21,6 +21,7 @@ except ImportError as exc:
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+LFS_SIZE_BYTES = 2048
 
 
 def resolve_python_executable() -> str:
@@ -41,6 +42,22 @@ def resolve_python_executable() -> str:
 def load_yaml(path: Path) -> Dict:
     with path.open("r", encoding="utf-8") as handle:
         return yaml.safe_load(handle) or {}
+
+
+def assert_not_lfs_pointer(path: Path) -> None:
+    if not path.exists():
+        return
+    size = path.stat().st_size
+    first_line = ""
+    try:
+        first_line = path.read_text(encoding="utf-8", errors="ignore").splitlines()[0]
+    except Exception:
+        first_line = ""
+    if size < LFS_SIZE_BYTES or "git-lfs" in first_line:
+        raise SystemExit(
+            f"{path} looks like a Git LFS pointer (size {size} bytes). "
+            "Point to a real merged ROOT or rerun merge."
+        )
 
 
 def resolve_path(value: str) -> Path:
@@ -120,6 +137,7 @@ def run_make_paper_outputs(
     cutflow = output_base / tag / "tables" / "cutflow.csv"
     if resume and cutflow.exists():
         return
+    assert_not_lfs_pointer(merged_root)
     cmd = [
         python_exe,
         "analysis/make_paper_outputs.py",
@@ -156,6 +174,8 @@ def run_compare_modes(
     summary_path: Path | None = None,
     config_path: Path | None = None,
     tag: str | None = None,
+    paper_none: Path | None = None,
+    paper_cad: Path | None = None,
 ) -> None:
     must_have = [
         out_dir / "compare_hit_efficiency_vs_coszen.pdf",
@@ -178,6 +198,10 @@ def run_compare_modes(
         "--thickness-microns",
         str(analysis_cfg.get("thickness_microns", 725)),
     ]
+    if paper_none is not None:
+        cmd.extend(["--paper-none", str(paper_none)])
+    if paper_cad is not None:
+        cmd.extend(["--paper-cad", str(paper_cad)])
     if summary_path is not None:
         cmd.extend(["--summary", str(summary_path)])
     if config_path is not None:
@@ -380,6 +404,8 @@ def main() -> int:
     parser.add_argument("--sanity-only", action="store_true", help="Run sanity gate only.")
     parser.add_argument("--skip-sanity", action="store_true", help="Skip sanity gate.")
     parser.add_argument("--only-compare", action="store_true", help="Regenerate analysis/compare only (no simulation).")
+    parser.add_argument("--merged-none", dest="merged_none", default=None, help="Override merged ROOT for none mode.")
+    parser.add_argument("--merged-cad", dest="merged_cad", default=None, help="Override merged ROOT for cad mode.")
     args = parser.parse_args()
 
     config_path = resolve_path(args.config)
@@ -428,11 +454,22 @@ def main() -> int:
 
     thickness_cm = float(analysis_cfg.get("thickness_microns", 725)) * 1.0e-4
 
+    paper_none_dir = paper_root / "none"
+    alt_none_dir = REPO_ROOT / f"paper_outputs/{tag}_none"
+    if not paper_none_dir.exists() and alt_none_dir.exists():
+        paper_none_dir = alt_none_dir
+    paper_cad_dir = paper_root / "cad"
+    alt_cad_dir = REPO_ROOT / f"paper_outputs/{tag}_cad"
+    if not paper_cad_dir.exists() and alt_cad_dir.exists():
+        paper_cad_dir = alt_cad_dir
+
     if args.only_compare:
-        none_root = out_root / "none" / "merged.root"
-        cad_root = out_root / "cad" / "merged.root"
+        none_root = resolve_path(args.merged_none) if args.merged_none else out_root / "none" / "merged.root"
+        cad_root = resolve_path(args.merged_cad) if args.merged_cad else out_root / "cad" / "merged.root"
         if not none_root.exists() or not cad_root.exists():
             raise SystemExit(f"--only-compare requested but merged roots missing: {none_root}, {cad_root}")
+        assert_not_lfs_pointer(none_root)
+        assert_not_lfs_pointer(cad_root)
         run_make_paper_outputs(
             python_exe, none_root, paper_root, "none", analysis_cfg, args.dry_run, resume=False
         )
@@ -443,8 +480,8 @@ def main() -> int:
         summary_path = REPO_ROOT / f"docs/cad_vs_none_summary_{tag}.md"
         run_compare_modes(
             python_exe,
-            cad_dir=paper_root / "cad",
-            none_dir=paper_root / "none",
+            cad_dir=paper_cad_dir,
+            none_dir=paper_none_dir,
             out_dir=compare_dir,
             analysis_cfg=analysis_cfg,
             dry_run=args.dry_run,
@@ -452,6 +489,8 @@ def main() -> int:
             summary_path=summary_path,
             config_path=config_path,
             tag=tag,
+            paper_none=paper_none_dir,
+            paper_cad=paper_cad_dir,
         )
         return 0
 
@@ -500,6 +539,8 @@ def main() -> int:
             summary_path=REPO_ROOT / f"docs/cad_vs_none_summary_{tag}_sanity.md",
             config_path=config_path,
             tag=f"{tag}_sanity",
+            paper_none=sanity_paper_root / "none",
+            paper_cad=sanity_paper_root / "cad",
         )
 
         if not args.dry_run:
@@ -542,6 +583,8 @@ def main() -> int:
 
     none_root = out_root / "none" / "merged.root"
     cad_root = out_root / "cad" / "merged.root"
+    assert_not_lfs_pointer(none_root)
+    assert_not_lfs_pointer(cad_root)
     run_make_paper_outputs(python_exe, none_root, paper_root, "none", analysis_cfg, args.dry_run, resume)
     run_make_paper_outputs(python_exe, cad_root, paper_root, "cad", analysis_cfg, args.dry_run, resume)
 
@@ -549,8 +592,8 @@ def main() -> int:
     summary_path = REPO_ROOT / f"docs/cad_vs_none_summary_{tag}.md"
     run_compare_modes(
         python_exe,
-        cad_dir=paper_root / "cad",
-        none_dir=paper_root / "none",
+        cad_dir=paper_cad_dir if paper_cad_dir.exists() else paper_root / "cad",
+        none_dir=paper_none_dir if paper_none_dir.exists() else paper_root / "none",
         out_dir=compare_dir,
         analysis_cfg=analysis_cfg,
         dry_run=args.dry_run,
@@ -558,6 +601,8 @@ def main() -> int:
         summary_path=summary_path,
         config_path=config_path,
         tag=tag,
+        paper_none=paper_none_dir if paper_none_dir.exists() else None,
+        paper_cad=paper_cad_dir if paper_cad_dir.exists() else None,
     )
 
     return 0

@@ -67,6 +67,16 @@ Compare folder highlights (`paper_outputs/<tag>/compare/`):
 - `compare_lcos_distribution.pdf`
 - `compare_charge_hits_core.pdf`, `compare_charge_hits_tail.pdf`, plus throughgoing variants when available
 
+Regenerate comparisons only (reuse existing paper outputs, both layouts supported):
+
+```bash
+python analysis/compare_modes.py \
+  --tag cad_vs_none_prod_v1 \
+  --paper-none paper_outputs/cad_vs_none_prod_v1_none \
+  --paper-cad paper_outputs/cad_vs_none_prod_v1_cad \
+  --out paper_outputs/cad_vs_none_prod_v1/compare
+```
+
 ## Output layout
 
 ```
@@ -95,6 +105,12 @@ paper_outputs/<tag>/
 docs/
   cad_vs_none_summary_<tag>_sanity.md
   cad_vs_none_summary_<tag>.md
+```
+
+Bundle everything for sharing:
+
+```bash
+python analysis/package_paper_outputs.py --tag cad_vs_none_prod_v1
 ```
 
 ## Dependencies

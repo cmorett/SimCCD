@@ -53,6 +53,7 @@ from pixelization.pixelize_helpers import EV_PER_ELECTRON  # noqa: E402
 THROUGHGOING_LCOS_TOL = 0.02
 THROUGHGOING_MIN_L3D_CM = 0.01
 COS_BINS_DEFAULT = 20
+LFS_SIZE_BYTES = 2048
 
 
 def ensure_dir(path: Path) -> Path:
@@ -71,6 +72,36 @@ def load_json(path: Path) -> Dict:
 
 def load_run_config(mode_dir: Path) -> Dict:
     return load_json(mode_dir / "run_config.json")
+
+
+def is_lfs_pointer(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        if path.stat().st_size < LFS_SIZE_BYTES:
+            head = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            if head and "git-lfs" in head[0]:
+                return True
+            return "git-lfs" in path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return False
+    return False
+
+
+def assert_not_lfs_pointer(path: Path) -> None:
+    if not path.exists():
+        return
+    size = path.stat().st_size
+    first_line = ""
+    try:
+        first_line = path.read_text(encoding="utf-8", errors="ignore").splitlines()[0]
+    except Exception:
+        first_line = ""
+    if size < LFS_SIZE_BYTES or "git-lfs" in first_line:
+        raise SystemExit(
+            f"{path} looks like a Git LFS pointer (size {size} bytes). "
+            "Point to real merged ROOTs or rerun merge."
+        )
 
 
 def load_csv_first_row(path: Path) -> Dict[str, float]:
@@ -136,6 +167,7 @@ def percentile_from_pixel_metrics(mode_dir: Path, column: str, percentile: float
 
 
 def load_events(root_path: Path, fields: Sequence[str]) -> Dict[str, np.ndarray]:
+    assert_not_lfs_pointer(root_path)
     with uproot.open(root_path) as root_file:
         if "B02Evts" not in root_file:
             raise RuntimeError(f"B02Evts tree missing in {root_path}")
@@ -354,6 +386,42 @@ class ModeData:
     run_config: Dict
 
 
+def discover_paper_dirs(
+    tag: Optional[str],
+    paper_none_arg: Optional[str],
+    paper_cad_arg: Optional[str],
+    cli_none: Optional[str],
+    cli_cad: Optional[str],
+) -> Tuple[Path, Path]:
+    if paper_none_arg:
+        paper_none = Path(paper_none_arg)
+    elif cli_none:
+        paper_none = Path(cli_none)
+    elif tag:
+        candidates = [Path("paper_outputs") / tag / "none", Path(f"paper_outputs/{tag}_none")]
+        existing = [p for p in candidates if p.exists()]
+        if not existing:
+            raise SystemExit(f"No paper output directory found for 'none'. Tried: {candidates}")
+        paper_none = existing[0]
+    else:
+        raise SystemExit("Paper output directory for 'none' not provided and tag is missing.")
+
+    if paper_cad_arg:
+        paper_cad = Path(paper_cad_arg)
+    elif cli_cad:
+        paper_cad = Path(cli_cad)
+    elif tag:
+        candidates = [Path("paper_outputs") / tag / "cad", Path(f"paper_outputs/{tag}_cad")]
+        existing = [p for p in candidates if p.exists()]
+        if not existing:
+            raise SystemExit(f"No paper output directory found for 'cad'. Tried: {candidates}")
+        paper_cad = existing[0]
+    else:
+        raise SystemExit("Paper output directory for 'cad' not provided and tag is missing.")
+
+    return paper_none, paper_cad
+
+
 def load_mode_data(
     label: str,
     mode_dir: Path,
@@ -365,6 +433,8 @@ def load_mode_data(
     root_path = root_override
     if root_path is None and run_config.get("input"):
         root_path = Path(run_config["input"])
+    if root_path is not None and not root_path.is_absolute():
+        root_path = (REPO_ROOT / root_path).resolve()
 
     cutflow = load_cutflow(mode_dir)
     validation = load_validation_row(mode_dir)
@@ -385,6 +455,7 @@ def load_mode_data(
     n_through = 0
 
     if root_path and root_path.exists():
+        assert_not_lfs_pointer(root_path)
         events = load_events(
             root_path,
             ["EdepCCD", "trackLenCCD", "thetaPri", "muonCosTheta", "nStepsCCD"],
@@ -840,9 +911,16 @@ def write_markdown_summary(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Compare CAD vs none paper outputs with ratio panels.")
-    parser.add_argument("--cad", required=True, help="CAD mode output folder (from make_paper_outputs).")
-    parser.add_argument("--none", dest="none", required=True, help="None mode output folder.")
-    parser.add_argument("--out", required=True, help="Output folder for comparison plots.")
+    parser.add_argument("--cad", help="CAD mode output folder (from make_paper_outputs).")
+    parser.add_argument("--none", dest="none", help="None mode output folder.")
+    parser.add_argument("--paper-cad", dest="paper_cad", help="Explicit paper output folder for CAD mode.")
+    parser.add_argument("--paper-none", dest="paper_none", help="Explicit paper output folder for none mode.")
+    parser.add_argument("--tag", default=None, help="Tag name for autodiscovery (paper_outputs/<tag>_{none,cad}).")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Output folder for comparison plots (default paper_outputs/<tag>/compare when tag is set).",
+    )
     parser.add_argument("--cad-root", dest="cad_root", default=None, help="Optional override merged ROOT for CAD.")
     parser.add_argument("--none-root", dest="none_root", default=None, help="Optional override merged ROOT for none.")
     parser.add_argument("--min-charge-e", type=float, default=1.0e4, help="Min charge for throughgoing selection.")
@@ -851,26 +929,44 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label-cad", default="CAD (steel+copper)", help="Legend label for CAD mode.")
     parser.add_argument("--bins-cos", type=int, default=COS_BINS_DEFAULT, help="Bins for cos(zenith) profiles.")
     parser.add_argument("--summary", default=None, help="Optional markdown summary output path.")
-    parser.add_argument("--tag", default=None, help="Tag name for summaries (defaults to out folder name).")
     parser.add_argument("--config", default=None, help="Optional YAML config to include in summary.")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    out_dir = ensure_dir(Path(args.out))
+    paper_none_dir, paper_cad_dir = discover_paper_dirs(
+        args.tag,
+        args.paper_none,
+        args.paper_cad,
+        args.none,
+        args.cad,
+    )
+    tag = args.tag
+    if tag is None:
+        if args.out:
+            tag = Path(args.out).parent.name
+        else:
+            tag = paper_none_dir.parent.name if paper_none_dir.name == "none" else paper_none_dir.name.replace("_none", "")
+
+    if args.out:
+        out_dir = ensure_dir(Path(args.out))
+    elif tag:
+        out_dir = ensure_dir(Path("paper_outputs") / tag / "compare")
+    else:
+        raise SystemExit("No output directory specified and tag is missing; provide --out or --tag.")
     thickness_cm = args.thickness_microns * 1.0e-4
 
     none_mode = load_mode_data(
         args.label_none,
-        Path(args.none),
+        paper_none_dir,
         Path(args.none_root) if args.none_root else None,
         thickness_cm,
         args.min_charge_e,
     )
     cad_mode = load_mode_data(
         args.label_cad,
-        Path(args.cad),
+        paper_cad_dir,
         Path(args.cad_root) if args.cad_root else None,
         thickness_cm,
         args.min_charge_e,
@@ -908,25 +1004,43 @@ def main() -> int:
         charge_p99_through_none,
         charge_p99_through_cad,
     )
-    write_comparison_summary(out_dir / "comparison_summary.csv", metrics)
+    comparison_summary_path = out_dir / "comparison_summary.csv"
+    write_comparison_summary(comparison_summary_path, metrics)
 
+    summary_path: Optional[Path] = None
     if args.summary:
+        summary_path = Path(args.summary)
+    elif tag:
+        summary_path = Path("docs") / f"cad_vs_none_summary_{tag}.md"
+
+    if summary_path:
         config_info: Dict = {}
         if args.config and Path(args.config).exists() and yaml:
             try:
                 config_info = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
             except Exception:
                 config_info = {}
-        tag = args.tag or out_dir.parent.name
         write_markdown_summary(
-            Path(args.summary),
-            tag,
+            summary_path,
+            tag or summary_path.stem,
             config_info,
             none_mode,
             cad_mode,
             metrics,
             compare_plots,
         )
+
+    manifest_lines = [
+        f"paper_none={paper_none_dir}",
+        f"paper_cad={paper_cad_dir}",
+        f"out_dir={out_dir}",
+        f"comparison_summary={comparison_summary_path}",
+        f"summary_markdown={summary_path if summary_path else 'none'}",
+        "outputs:",
+    ]
+    for p in sorted(compare_plots + [comparison_summary_path] + ([summary_path] if summary_path else [])):
+        manifest_lines.append(str(p))
+    (out_dir / "compare_manifest.txt").write_text("\n".join(manifest_lines) + "\n", encoding="utf-8")
 
     return 0
 
