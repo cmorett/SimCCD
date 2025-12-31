@@ -250,11 +250,15 @@ def centers_from_edges(edges: np.ndarray) -> np.ndarray:
     return 0.5 * (edges[:-1] + edges[1:])
 
 
-def positive_ylim(values: np.ndarray) -> float:
-    vals = values[np.isfinite(values) & (values > 0)]
-    if vals.size == 0:
-        return 0.1
-    return max(np.min(vals) * 0.8, 0.1)
+def logy_limits(vals: np.ndarray, floor: float = 1.0e-12) -> Tuple[float, float]:
+    v = vals[np.isfinite(vals) & (vals > 0)]
+    if v.size == 0:
+        return floor, floor * 10.0
+    ymin = max(np.min(v) * 0.5, floor)
+    ymax = np.max(v) * 1.2
+    if ymax <= ymin:
+        ymax = ymin * 10.0
+    return ymin, ymax
 
 
 def make_ratio_series_plot(
@@ -338,8 +342,14 @@ def make_hist_ratio_plot(
     ax.set_title(title)
     ax.grid(alpha=0.3)
     if logy:
+        y_top_values = np.concatenate([rate_none, rate_cad])
+        ymin, ymax = logy_limits(y_top_values)
+        pos = y_top_values[np.isfinite(y_top_values) & (y_top_values > 0)]
+        data_min = float(np.min(pos)) if pos.size else float("nan")
+        data_max = float(np.max(pos)) if pos.size else float("nan")
+        print(f"[logy] {out_path.stem}: data_min={data_min:.3g}, data_max={data_max:.3g}, ylim=({ymin:.3g}, {ymax:.3g})")
         ax.set_yscale("log")
-        ax.set_ylim(bottom=positive_ylim(np.concatenate([rate_none, rate_cad])))
+        ax.set_ylim(ymin, ymax)
     ax.legend()
 
     axr.axhline(1.0, color="black", linewidth=1)
