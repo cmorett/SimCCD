@@ -356,10 +356,115 @@ def make_hist_ratio_plot(
 
 
 def combined_percentile(values: Iterable[np.ndarray], pct: float) -> float:
-    merged = np.concatenate([np.asarray(v, dtype=float) for v in values if np.asarray(v).size])
+    arrays = []
+    for v in values:
+        arr = np.asarray(v, dtype=float).ravel()
+        if arr.size:
+            arrays.append(arr[np.isfinite(arr)])
+    if not arrays:
+        return float("nan")
+    merged = np.concatenate(arrays)
     if merged.size == 0:
-        return 0.0
+        return float("nan")
     return float(np.percentile(merged, pct))
+
+
+def find_matching_column(columns: Sequence[str], candidates: Sequence[str]) -> Optional[str]:
+    lower_map = {c.lower(): c for c in columns}
+    for cand in candidates:
+        if cand in columns:
+            return cand
+    for cand in candidates:
+        key = cand.lower()
+        if key in lower_map:
+            return lower_map[key]
+    return None
+
+
+def load_pixel_metrics_from_csv(
+    mode_dir: Path,
+) -> Optional[Tuple[Path, Dict[str, np.ndarray], int, int]]:
+    candidates = [
+        mode_dir / "tables" / "pixel_metrics_quality.csv",
+        mode_dir / "tables" / "pixel_metrics_all.csv",
+    ]
+    path = next((p for p in candidates if p.exists()), None)
+    if path is None:
+        return None
+
+    df = None
+    rows: List[Dict[str, str]] = []
+    columns: List[str] = []
+    n_rows = 0
+    try:
+        if pd is not None:
+            df = pd.read_csv(path)
+            columns = list(df.columns)
+            n_rows = len(df)
+        else:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                columns = reader.fieldnames or []
+                rows = list(reader)
+                n_rows = len(rows)
+    except Exception as exc:
+        raise SystemExit(f"Failed to read {path}: {exc}") from exc
+
+    def numeric_series(name: str) -> np.ndarray:
+        if pd is not None and df is not None:
+            series = pd.to_numeric(df[name], errors="coerce")
+            return series.to_numpy(dtype=float)
+        values: List[float] = []
+        for row in rows:
+            try:
+                values.append(float(row.get(name, float("nan"))))
+            except Exception:
+                values.append(float("nan"))
+        return np.asarray(values, dtype=float)
+
+    cos_col = find_matching_column(columns, ["coszen_down", "coszen", "cos_theta", "costheta", "cos_theta_down"])
+    theta_col = find_matching_column(columns, ["theta"])
+    track_col = find_matching_column(columns, ["trackLenCCD_cm", "trackLen_cm", "trackLenCCD", "trackLen"])
+    edep_col = find_matching_column(columns, ["edepCCD_GeV", "edep_GeV", "EdepCCD", "edep"])
+    charge_col = find_matching_column(columns, ["charge", "cluster_charge", "charge_e"])
+    nsteps_col = find_matching_column(columns, ["nStepsCCD", "n_steps", "nSteps"])
+
+    missing: List[str] = []
+    if not (cos_col or theta_col):
+        missing.append("coszen_down/cos_theta/theta")
+    if not track_col:
+        missing.append("trackLenCCD_cm/trackLen_cm")
+    if not (edep_col or charge_col):
+        missing.append("edepCCD_GeV/edep_GeV/charge")
+    if missing:
+        raise SystemExit(
+            f"Missing required columns in {path}: {', '.join(missing)}. "
+            f"Columns ({len(columns)}): {columns}; rows={n_rows}"
+        )
+
+    cos_source = None
+    if cos_col:
+        cos_source = numeric_series(cos_col)
+    elif theta_col:
+        theta_vals = numeric_series(theta_col)
+        theta_abs_max = np.nanmax(np.abs(theta_vals)) if np.any(np.isfinite(theta_vals)) else 0.0
+        theta_rad = np.deg2rad(theta_vals) if theta_abs_max > (2.0 * math.pi) else theta_vals
+        cos_source = np.cos(theta_rad)
+    cos_down = np.clip(np.abs(cos_source) if cos_source is not None else np.array([], dtype=float), 0.0, 1.0)
+
+    track = numeric_series(track_col) if track_col else np.array([], dtype=float)
+    edep = numeric_series(edep_col) if edep_col else np.array([], dtype=float)
+    charge = numeric_series(charge_col) if charge_col else None
+    if charge is None:
+        charge = edep * 1.0e9 / EV_PER_ELECTRON
+    n_steps_arr = numeric_series(nsteps_col) if nsteps_col else None
+
+    return (
+        path,
+        {"cos_down": cos_down, "track": track, "edep": edep, "charge": charge, "n_steps": n_steps_arr},
+        n_rows,
+        len(columns),
+    )
 
 
 @dataclass
@@ -443,7 +548,7 @@ def load_mode_data(
     edep = np.array([])
     track = np.array([])
     cos_down = np.array([])
-    n_steps = None
+    n_steps: Optional[np.ndarray] = None
     mask_hit = np.array([], dtype=bool)
     mask_through = np.array([], dtype=bool)
     charge = np.array([])
@@ -453,7 +558,12 @@ def load_mode_data(
     n_thrown = 0
     n_hits = 0
     n_through = 0
+    data_source = "none"
+    csv_path: Optional[Path] = None
+    csv_rows = 0
+    csv_cols = 0
 
+    csv_payload = load_pixel_metrics_from_csv(mode_dir)
     if root_path and root_path.exists():
         assert_not_lfs_pointer(root_path)
         events = load_events(
@@ -465,16 +575,68 @@ def load_mode_data(
         cos_down = compute_cos_down(events)
         n_steps = np.asarray(events["nStepsCCD"], dtype=float) if "nStepsCCD" in events else None
         n_thrown = len(edep)
-        mask_hit = compute_hit_mask(edep, track, n_steps)
-        mask_through = compute_throughgoing_mask(edep, track, cos_down, thickness_cm, min_charge_e, mask_hit)
         charge = edep * 1.0e9 / EV_PER_ELECTRON
-        lcos = track * np.abs(cos_down)
-        dedx_hits = edep[mask_hit] * 1000.0 / np.clip(track[mask_hit], 1.0e-6, None)
-        dedx_through = edep[mask_through] * 1000.0 / np.clip(track[mask_through], 1.0e-6, None)
-        n_hits = int(np.sum(mask_hit))
-        n_through = int(np.sum(mask_through))
+        data_source = "root"
     else:
-        print(f"[WARN] Missing merged ROOT for {label}; comparisons limited. Looking for {root_path}")
+        if root_path:
+            print(f"[WARN] Missing merged ROOT for {label}; comparisons limited. Looking for {root_path}")
+
+    use_csv = (edep.size == 0 or track.size == 0 or cos_down.size == 0)
+    if use_csv and csv_payload:
+        csv_path, csv_arrays, csv_rows, csv_cols = csv_payload
+        edep = csv_arrays["edep"]
+        track = csv_arrays["track"]
+        cos_down = csv_arrays["cos_down"]
+        charge = csv_arrays["charge"]
+        n_steps = csv_arrays.get("n_steps")
+        data_source = "csv"
+    elif not use_csv and csv_payload:
+        csv_path, _, csv_rows, csv_cols = csv_payload
+    elif use_csv and not csv_payload:
+        print(f"[WARN] No pixel metrics CSV found for {label}; data arrays are empty.")
+
+    edep = np.nan_to_num(np.asarray(edep, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+    track = np.nan_to_num(np.asarray(track, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+    cos_down = np.clip(np.nan_to_num(np.asarray(cos_down, dtype=float), nan=0.0, posinf=1.0, neginf=0.0), 0.0, 1.0)
+    if n_steps is not None:
+        n_steps = np.nan_to_num(np.asarray(n_steps, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+
+    mask_hit = compute_hit_mask(edep, track, n_steps)
+    mask_through = compute_throughgoing_mask(edep, track, cos_down, thickness_cm, min_charge_e, mask_hit) if mask_hit.size else np.array([], dtype=bool)
+    charge = charge if charge.size else edep * 1.0e9 / EV_PER_ELECTRON
+    charge = np.nan_to_num(np.asarray(charge, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+    lcos = track * np.abs(cos_down)
+    dedx_hits = edep[mask_hit] * 1000.0 / np.clip(track[mask_hit], 1.0e-6, None) if mask_hit.size else np.array([])
+    dedx_through = (
+        edep[mask_through] * 1000.0 / np.clip(track[mask_through], 1.0e-6, None) if mask_through.size else np.array([])
+    )
+    n_hits = int(np.sum(mask_hit))
+    n_through = int(np.sum(mask_through))
+
+    if not n_thrown:
+        cf_thrown = cutflow.get("thrown") if cutflow else None
+        if cf_thrown is None and validation:
+            cf_thrown = validation.get("n_thrown") or validation.get("n_events") or validation.get("n_events_ccd")
+        try:
+            n_thrown = int(cf_thrown) if cf_thrown is not None else int(len(edep))
+        except Exception:
+            n_thrown = len(edep)
+    if not n_hits:
+        cf_hits = cutflow.get("hits") if cutflow else None
+        if cf_hits is None and validation:
+            cf_hits = validation.get("n_hits") or validation.get("n_events_ccd")
+        try:
+            n_hits = int(cf_hits) if cf_hits is not None else int(np.sum(mask_hit))
+        except Exception:
+            n_hits = int(np.sum(mask_hit))
+    if not n_through:
+        cf_through = cutflow.get("throughgoing") if cutflow else None
+        if cf_through is None and validation:
+            cf_through = validation.get("n_throughgoing")
+        try:
+            n_through = int(cf_through) if cf_through is not None else int(np.sum(mask_through))
+        except Exception:
+            n_through = int(np.sum(mask_through))
 
     if not cutflow and n_thrown:
         cutflow = {
@@ -482,6 +644,14 @@ def load_mode_data(
             "hits": n_hits,
             "throughgoing": n_through,
         }
+
+    mode_tag = (label.lower().split()[0] if label else "mode")[:4]
+    csv_label = str(csv_path) if csv_path else "none"
+    print(f"[mode {mode_tag:<4}] csv={csv_label} rows={csv_rows} hit={n_hits} through={n_through} cols={csv_cols}")
+    if mask_hit.size and n_hits == 0:
+        print(f"[diag] {label}: hit mask removed all {mask_hit.size} entries from {data_source} data.")
+    if mask_through.size and n_through == 0:
+        print(f"[diag] {label}: throughgoing mask removed all entries (hit count {n_hits}).")
 
     return ModeData(
         label=label,
@@ -521,6 +691,23 @@ def build_comparison_plots(
     norm_cad_thrown = max(cad_mode.n_thrown, 1)
     norm_none_hits = max(none_mode.n_hits, 1)
     norm_cad_hits = max(cad_mode.n_hits, 1)
+
+    def fallback_value(val: float, default: float) -> float:
+        try:
+            if val is None or not np.isfinite(val) or val <= 0:
+                return default
+        except Exception:
+            return default
+        return float(val)
+
+    if none_mode.cos_down.size == 0:
+        print(f"[diag] No cos(zenith) entries for {label_none}; cos-binned plots will be empty.")
+    if cad_mode.cos_down.size == 0:
+        print(f"[diag] No cos(zenith) entries for {label_cad}; cos-binned plots will be empty.")
+    if none_mode.mask_hit.size == 0:
+        print(f"[diag] {label_none} has no hit entries; hit histograms will be empty.")
+    if cad_mode.mask_hit.size == 0:
+        print(f"[diag] {label_cad} has no hit entries; hit histograms will be empty.")
 
     bins_cos_edges = np.linspace(0.0, 1.0, bins_cos + 1)
     centers_cos = centers_from_edges(bins_cos_edges)
@@ -663,11 +850,11 @@ def build_comparison_plots(
     plots.append(out_path)
 
     # Lcos distribution (hits, per thrown)
-    lcos_combined_hi = max(
-        combined_percentile([none_mode.lcos[none_mode.mask_hit], cad_mode.lcos[cad_mode.mask_hit]], 99.5),
-        thickness_cm * 1.2 if thickness_cm > 0 else 0.1,
-    )
-    bins_lcos = np.linspace(0.0, lcos_combined_hi, 140)
+    lcos_pct = combined_percentile([none_mode.lcos[none_mode.mask_hit], cad_mode.lcos[cad_mode.mask_hit]], 99.5)
+    default_lcos_hi = thickness_cm * 1.2 if thickness_cm > 0 else 0.1
+    lcos_combined_hi = fallback_value(lcos_pct, default_lcos_hi)
+    lcos_combined_hi = fallback_value(lcos_combined_hi, max(default_lcos_hi, 0.1))
+    bins_lcos = np.linspace(0.0, max(lcos_combined_hi, default_lcos_hi, 0.1), 140)
     out_path = out_dir / "compare_lcos_distribution.pdf"
     make_hist_ratio_plot(
         none_mode.lcos[none_mode.mask_hit],
@@ -691,8 +878,9 @@ def build_comparison_plots(
     charge_through_none = none_mode.charge[none_mode.mask_through]
     charge_through_cad = cad_mode.charge[cad_mode.mask_through]
 
-    charge_core_hi = max(combined_percentile([charge_hits_none, charge_hits_cad], 99.0), 1.0)
-    bins_charge_core = np.linspace(0.0, charge_core_hi, 140)
+    charge_core_pct = combined_percentile([charge_hits_none, charge_hits_cad], 99.0)
+    charge_core_hi = fallback_value(charge_core_pct, 1.0)
+    bins_charge_core = np.linspace(0.0, max(charge_core_hi, 1.0), 140)
     out_path = out_dir / "compare_charge_hits_core.pdf"
     make_hist_ratio_plot(
         charge_hits_none,
@@ -710,8 +898,12 @@ def build_comparison_plots(
     )
     plots.append(out_path)
 
-    charge_tail_hi = max(combined_percentile([charge_hits_none, charge_hits_cad], 99.9), charge_core_hi)
-    bins_charge_tail = np.linspace(0.0, charge_tail_hi, 160)
+    charge_tail_pct = combined_percentile([charge_hits_none, charge_hits_cad], 99.9)
+    charge_tail_hi = fallback_value(
+        charge_tail_pct,
+        charge_core_hi if np.isfinite(charge_core_hi) and charge_core_hi > 0 else 1.0,
+    )
+    bins_charge_tail = np.linspace(0.0, max(charge_tail_hi, charge_core_hi, 1.0), 160)
     out_path = out_dir / "compare_charge_hits_tail.pdf"
     make_hist_ratio_plot(
         charge_hits_none,
@@ -730,8 +922,9 @@ def build_comparison_plots(
     plots.append(out_path)
 
     if charge_through_none.size or charge_through_cad.size:
-        charge_thr_core_hi = max(combined_percentile([charge_through_none, charge_through_cad], 99.0), 1.0)
-        bins_charge_thr_core = np.linspace(0.0, charge_thr_core_hi, 120)
+        charge_thr_core_pct = combined_percentile([charge_through_none, charge_through_cad], 99.0)
+        charge_thr_core_hi = fallback_value(charge_thr_core_pct, 1.0)
+        bins_charge_thr_core = np.linspace(0.0, max(charge_thr_core_hi, 1.0), 120)
         out_path = out_dir / "compare_charge_through_core.pdf"
         make_hist_ratio_plot(
             charge_through_none,
@@ -749,8 +942,12 @@ def build_comparison_plots(
         )
         plots.append(out_path)
 
-        charge_thr_tail_hi = max(combined_percentile([charge_through_none, charge_through_cad], 99.9), charge_thr_core_hi)
-        bins_charge_thr_tail = np.linspace(0.0, charge_thr_tail_hi, 150)
+        charge_thr_tail_pct = combined_percentile([charge_through_none, charge_through_cad], 99.9)
+        charge_thr_tail_hi = fallback_value(
+            charge_thr_tail_pct,
+            charge_thr_core_hi if np.isfinite(charge_thr_core_hi) and charge_thr_core_hi > 0 else 1.0,
+        )
+        bins_charge_thr_tail = np.linspace(0.0, max(charge_thr_tail_hi, charge_thr_core_hi, 1.0), 150)
         out_path = out_dir / "compare_charge_through_tail.pdf"
         make_hist_ratio_plot(
             charge_through_none,

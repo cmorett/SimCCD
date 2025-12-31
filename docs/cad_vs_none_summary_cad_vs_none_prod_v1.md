@@ -2,26 +2,26 @@
 
 ## Run config
 - tag: cad_vs_none_prod_v1
-- thrown_none: 2000
-- thrown_cad: 2000
+- thrown_none: 1000000
+- thrown_cad: 500000
 - compare_dir: paper_outputs\cad_vs_none_prod_v1\compare
 
 ## Cutflow (counts)
 | stage | none | cad |
 | --- | --- | --- |
-| hits | 1313 | 1336 |
-| quality | 1313 | 1336 |
-| throughgoing | 296 | 211 |
-| thrown | 2000 | 2000 |
+| hits | 23100 | 11504 |
+| quality | 23099 | 10688 |
+| throughgoing | 22643 | 8460 |
+| thrown | 1000000 | 500000 |
 
 ## Headline effects
 | metric | none | cad | ratio |
 | --- | --- | --- | --- |
-| hits_per_thrown | 0.6565 +/- 0.011 | 0.668 +/- 0.011 | 1.01752 +/- 0.023 |
-| through_per_thrown | 0.148 +/- 0.0079 | 0.1055 +/- 0.0069 | 0.712838 +/- 0.06 |
-| through_fraction_of_hits | 0.225438 +/- 0.012 | 0.157934 +/- 0.01 | 0.700566 +/- 0.057 |
-| charge_p99_hits | 921477 +/- 0 | 1.00025e+06 +/- 0 | 1.08549 +/- 0 |
-| charge_p99_through | 859443 +/- 0 | 1.1246e+06 +/- 0 | 1.30852 +/- 0 |
+| hits_per_thrown | 0.023099 +/- 0.00015 | 0.021376 +/- 0.0002 | 0.925408 +/- 0.011 |
+| through_per_thrown | 0.022643 +/- 0.00015 | 0.01692 +/- 0.00018 | 0.747251 +/- 0.0094 |
+| through_fraction_of_hits | 0.980259 +/- 0.00092 | 0.791542 +/- 0.0039 | 0.807483 +/- 0.0041 |
+| charge_p99_hits | 207715 +/- 0 | 437323 +/- 0 | 2.1054 +/- 0 |
+| charge_p99_through | 208081 +/- 0 | 439548 +/- 0 | 2.11239 +/- 0 |
 
 ## Key plots
 - `paper_outputs\cad_vs_none_prod_v1\compare\compare_charge_hits_core.pdf`
