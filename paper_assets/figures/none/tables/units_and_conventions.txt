@@ -1,0 +1,14 @@
+Units and conventions:
+- thetaPri/phiPri: Geant4 polar/azimuthal angles (rad); downward cos(zenith) = -cos(thetaPri).
+- EevtPri: primary kinetic energy (GeV).
+- muonX0/Y0/Z0 and muonXImp/YImp/ZImp: cm.
+- EdepCCD: total deposited energy in CCD sensitive volume (GeV).
+- trackLenCCD: 3D chord length between first and last CCD step (cm).
+- xEntryCCD/xExitCCD/yEntryCCD/yExitCCD: cm; L2D_expected = sqrt((xExit-xEntry)^2 + (yExit-yEntry)^2).
+- dirX/dirY/dirZ: primary momentum direction (unit vector).
+- Pixelization: pixel size 15.0 um, CCD thickness 725.0 um, 3.7 eV per electron.
+- dE/dx: computed as EdepCCD * 1000 / trackLenCCD (MeV/cm) for trackLenCCD>0. Plots optionally require trackLenCCD>0.01 cm to avoid extreme ratios from grazing hits.
+- Canvas: adaptive mode sizes canvas to track length with margin; truncation flag marks charge touching the image edge.
+- PCA metrics: sigma_long/sigma_trans = sqrt(eigenvalues of charge covariance); elongation = sigma_long/sigma_trans; length_pix_img = p99-p1 along PCA axis (2D image plane); length_pix_geom = trackLenCCD * 1e4 / pixel_size (3D chord in pixels); length_expected_cm/pix = entry/exit projected length.
+- Quality cuts: EdepCCD>0, trackLenCCD>0, is_truncated=False.
+- Throughgoing: Lcos = trackLenCCD * |cos(thetaPri)| (using cos_{zenith}^{down}); require |Lcos - thickness| < 0.02 * thickness, trackLenCCD > 0.01 cm, and charge_e >= --min-charge-e (charge_e from EdepCCD * 1e9 / ev_per_electron).

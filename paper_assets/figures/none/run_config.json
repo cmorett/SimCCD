@@ -1,0 +1,41 @@
+{
+  "input": "C:\\Users\\cmore\\Downloads\\cad_vs_none_prod_v1_outputs_20251230_163752\\cad_vs_none_prod_v1\\none\\merged.root",
+  "output": "paper_outputs\\cad_vs_none_prod_v1_regen\\none",
+  "examples": 24,
+  "dist_events": "50000",
+  "seed": 12345,
+  "quality_only": true,
+  "canvas_mode": "adaptive",
+  "canvas_size": null,
+  "margin_pix": 24,
+  "min_charge_e": 10000.0,
+  "fail_on_warning": false,
+  "ccd_params": {
+    "pixel_size_microns": 15.0,
+    "thickness_microns": 725.0,
+    "ev_per_electron": 3.7,
+    "width_microns": 54610.0,
+    "height_microns": 54610.0,
+    "diffusion_alpha": 1400.0,
+    "diffusion_beta": 0.0013774104683195593,
+    "max_canvas_pix": 512
+  },
+  "run_info": {
+    "seed1": 12345,
+    "seed2": 12346,
+    "useTimeSeed": 0,
+    "overburdenEnabled": 0,
+    "overburdenThickness_cm": 0.0,
+    "overburdenZTop_cm": 8.0,
+    "ccdGammaCut_cm": 0.0,
+    "ccdElectronCut_cm": 0.0,
+    "ccdPositronCut_cm": 0.0,
+    "ccdMaxStep_cm": 0.0,
+    "ccdThickness_cm": 0.0725,
+    "muonChargeRatio": 1.25,
+    "gitHashCode": 1.1023571629210341e+18,
+    "macroHashCode": 1.3341657793233031e+19,
+    "macroPathHash": 1.4372657359782961e+19,
+    "physicsListHash": 1.3188008956029176e+19
+  }
+}
