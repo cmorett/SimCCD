@@ -107,7 +107,7 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
     // double px = 1.7; // cm
     // double py = 1.7; // cm
 
-    G4double fThetaMaxRad = 85.*deg;
+    G4double fThetaMaxRad = 90.*deg;
     G4bool fUseCosmicMuons = true;
     G4String fMuonModeString = "forced_footprint";
     G4String fMuonImpactModeString = "unbiased";
@@ -137,7 +137,7 @@ class B02PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction
     G4double fMuonTheta = 0.0;
     G4double fMuonPhi = 0.0;
     G4double fMuonEnergyGeV = 4.0;
-    G4bool fUseFixedEnergy = true;
+    G4bool fUseFixedEnergy = false;
     G4double fMuonCosTheta = 1.0;
     G4double fSampledEnergyGeV = 0.0;
     G4int fMuonPDGCode = 13;

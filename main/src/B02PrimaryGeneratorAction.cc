@@ -161,15 +161,11 @@ void B02PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent) {
   fSampledEnergyGeV = fMuonEnergyGeV;
   fMuonCosTheta = 1.0;
   fGeomIntersectsCCD = false;
-  fMuonIsTargeted = false;
+  fMuonIsTargeted = true;
+  fMuonModeString = ToString(MuonMode::ForcedFootprint);
 
   if (fUseCosmicMuons) {
-    const MuonMode mode = ParseMuonMode(fMuonModeString);
-    if (mode == MuonMode::TierBPlaneFlux) {
-      GenerateTierBFlux(anEvent);
-    } else {
-      GenerateForcedFootprint(anEvent);
-    }
+    GenerateForcedFootprint(anEvent);
     return;
   }
 
@@ -177,12 +173,13 @@ void B02PrimaryGeneratorAction::GeneratePrimaries(G4Event* anEvent) {
   // particleGun settings drive direction/position.
   if (fUseFixedEnergy) {
     particleGun->SetParticleEnergy(fMuonEnergyGeV * GeV);
+    fSampledEnergyGeV = fMuonEnergyGeV;
   }
   particleGun->GeneratePrimaryVertex(anEvent);
 }
 
 void B02PrimaryGeneratorAction::GenerateForcedFootprint(G4Event* anEvent) {
-  // Legacy biased mode: back-project through the CCD footprint.
+  // Hemisphere-based sampler with accept-reject on theta ~ cos^2(theta) * sin(theta).
   const G4double thetaUpper = std::min(fThetaMaxRad, 0.5 * pi);
   G4double theta = 0.0;
   while (true) {
@@ -194,90 +191,82 @@ void B02PrimaryGeneratorAction::GenerateForcedFootprint(G4Event* anEvent) {
     }
   }
   const G4double phi = G4RandFlat::shoot(0.0, twopi);
-
   const G4double cosTheta = std::cos(theta);
   const G4double sinTheta = std::sin(theta);
-  const G4double X = R * sinTheta * std::cos(phi);
-  const G4double Y = R * sinTheta * std::sin(phi);
-  const G4double Z = R * cosTheta;
-
-  const G4double u = G4RandFlat::shoot(-px / 2.0, px / 2.0);
-  const G4double v = G4RandFlat::shoot(-py / 2.0, py / 2.0);
-  const G4double x0_cm = X + u * cosTheta * std::cos(phi) - v * std::sin(phi);
-  const G4double y0_cm = Y + u * cosTheta * std::sin(phi) + v * std::cos(phi);
-  const G4double z0_cm = Z - u * std::sin(theta);
-
-  const G4double targetZ_cm = fZImpactPlane / cm;
-  const G4double deltaZ_cm = z0_cm - targetZ_cm;
   const G4double tanTheta = (cosTheta != 0.0) ? sinTheta / cosTheta : 0.0;
-  const G4double xImp_cm = x0_cm - deltaZ_cm * tanTheta * std::cos(phi);
-  const G4double yImp_cm = y0_cm - deltaZ_cm * tanTheta * std::sin(phi);
+
+  const G4double xImp_cm = G4RandFlat::shoot(-px / 2.0, px / 2.0);
+  const G4double yImp_cm = G4RandFlat::shoot(-py / 2.0, py / 2.0);
+  const G4double zImp_cm = fZImpactPlane / cm;
+  const G4double z0_cm = zImp_cm + R;
+  const G4double deltaZ_cm = z0_cm - zImp_cm;
+
+  const G4double x0_cm = xImp_cm - deltaZ_cm * tanTheta * std::cos(phi);
+  const G4double y0_cm = yImp_cm - deltaZ_cm * tanTheta * std::sin(phi);
 
   fMuonX0 = x0_cm * cm;
   fMuonY0 = y0_cm * cm;
   fMuonZ0 = z0_cm * cm;
   fMuonXImp = xImp_cm * cm;
   fMuonYImp = yImp_cm * cm;
-  fMuonZImp = fZImpactPlane;
+  fMuonZImp = zImp_cm * cm;
   fMuonTheta = theta;
   fMuonPhi = phi;
   fMuonCosTheta = cosTheta;
+  const G4double halfPx = 0.5 * px * cm;
+  const G4double halfPy = 0.5 * py * cm;
+  fGeomIntersectsCCD =
+      (std::abs(fMuonXImp) <= halfPx) && (std::abs(fMuonYImp) <= halfPy);
 
-  particleGun->SetParticlePosition(
-      G4ThreeVector(fMuonX0, fMuonY0, fMuonZ0));
+  particleGun->SetParticlePosition(G4ThreeVector(fMuonX0, fMuonY0, fMuonZ0));
   particleGun->SetParticleMomentumDirection(
-      G4ThreeVector(-sinTheta * std::cos(phi), -sinTheta * std::sin(phi),
-                    -cosTheta));
+      G4ThreeVector(sinTheta * std::cos(phi), sinTheta * std::sin(phi), -cosTheta));
 
   G4double kineticEnergy = fMuonEnergyGeV * GeV;
   if (!fUseFixedEnergy) {
-    // Smith & Duller energy spectrum
-    double Emin = -1;
-    double Emax = 5;
-
+    // Smith-Duller spectrum
+    const double Emin = -1.0;
+    const double Emax = 5.0;
     const int ee = 10000;
     double ES[ee];
-    double dE_log = (Emax - Emin) / ee;
+    const double dE_log = (Emax - Emin) / ee;
 
-    double Eu;            // Variable de energia cinetica
-    double Au = 2e9;                      // Parametros de la funcion de Smith
-    double gu = 2.645;                    // ...
-    double ru = 0.76;                     // ...
-    double au = 2.5;
-    double y0u = 1000.0;
-    double bmu = 0.80;
-    double cu = 299792458.0e2;
-    double mmu = 105.7 / pow(cu, 2);
-    double t0mu = 2.2e-6;
-    double r0u = 0.00129;
-    double Epu;
-    double Bmu = bmu * mmu * y0u * cu / (t0mu * r0u);
-    double Pmu;
-    double lpu = 120.0;
-    double bu = 0.771;
-    double mpu = 139.6 / pow(cu, 2);
-    double t0pu = 2.6e-8;
-    double jpu = mpu * y0u * cu / (t0pu * r0u);
+    const double Au = 2e9;
+    const double gu = 2.645;
+    const double ru = 0.76;
+    const double au = 2.5;
+    const double y0u = 1000.0;
+    const double bmu = 0.80;
+    const double cu = 299792458.0e2;
+    const double mmu = 105.7 / pow(cu, 2);
+    const double t0mu = 2.2e-6;
+    const double r0u = 0.00129;
+    const double Bmu = bmu * mmu * y0u * cu / (t0mu * r0u);
+    const double lpu = 120.0;
+    const double bu = 0.771;
+    const double mpu = 139.6 / pow(cu, 2);
+    const double t0pu = 2.6e-8;
+    const double jpu = mpu * y0u * cu / (t0pu * r0u);
 
-    for (int j = 0; j < ee; j++) {    // Construye la funcion de Smith en un arreglo
-      Eu = pow(10, Emin + j * dE_log);
-      Epu = (Eu + au * y0u * (1.0 / cosTheta - 0.100)) / ru;
-      Pmu = pow(0.100 * cosTheta *
-                    (1 - (au * (y0u / cosTheta - 100) / (ru * Epu))),
-                (Bmu / ((ru * Epu + 100 * au) * cosTheta)));
-      ES[j] = Au * (pow(Epu, -gu)) * Pmu * lpu * bu * jpu /
-              (Epu * cosTheta + bu * jpu);
+    for (int j = 0; j < ee; j++) {
+      const double Eu = pow(10, Emin + j * dE_log);
+      const double Epu = (Eu + au * y0u * (1.0 / cosTheta - 0.100)) / ru;
+      const double Pmu = pow(0.100 * cosTheta *
+                                 (1 - (au * (y0u / cosTheta - 100) / (ru * Epu))),
+                             (Bmu / ((ru * Epu + 100 * au) * cosTheta)));
+      ES[j] = Au * (pow(Epu, -gu)) * Pmu * lpu * bu * jpu / (Epu * cosTheta + bu * jpu);
     }
 
-    int nbins = ee;
-    G4RandGeneral GenDist(ES, nbins);          // Distribucion de energias
-    double E = pow(10, Emin + (GenDist.shoot()) * (Emax - Emin));   // Sampleo de la energia
+    G4RandGeneral GenDist(ES, ee);
+    const double E = pow(10, Emin + (GenDist.shoot()) * (Emax - Emin));
     kineticEnergy = E * MeV;
+    fSampledEnergyGeV = kineticEnergy / GeV;
+  } else {
+    fSampledEnergyGeV = kineticEnergy / GeV;
   }
 
   particleGun->SetParticleEnergy(kineticEnergy);
   particleGun->GeneratePrimaryVertex(anEvent);
-  fSampledEnergyGeV = kineticEnergy / GeV;
 }
 
 void B02PrimaryGeneratorAction::GenerateTierBFlux(G4Event* anEvent) {
@@ -461,7 +450,12 @@ void B02PrimaryGeneratorAction::MarkSamplerDirty() {
 }
 
 void B02PrimaryGeneratorAction::SetMuonMode(const G4String& mode) {
-  fMuonModeString = mode;
+  const auto parsed = ParseMuonMode(mode);
+  if (parsed != MuonMode::ForcedFootprint) {
+    G4cout << "[generator] Plane flux mode is disabled; using hemisphere forced_footprint instead."
+           << G4endl;
+  }
+  fMuonModeString = ToString(MuonMode::ForcedFootprint);
 }
 
 void B02PrimaryGeneratorAction::SetMuonImpactMode(const G4String& mode) {
@@ -567,7 +561,7 @@ void B02PrimaryGeneratorAction::DefineCommands() {
                               "Use fixed muon kinetic energy instead of sampling");
 
   fMessenger->DeclareMethod("muonMode", &B02PrimaryGeneratorAction::SetMuonMode,
-                            "Muon source mode: forced_footprint or tierB_plane_flux");
+                            "Muon source mode (hemisphere forced_footprint only; plane flux disabled).");
   fMessenger->DeclareMethod("fluxModel",
                             &B02PrimaryGeneratorAction::SetFluxModel,
                             "Flux model: guan2015 (default) or pdg_gaisser");

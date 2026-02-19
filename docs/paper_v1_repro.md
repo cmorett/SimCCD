@@ -3,8 +3,8 @@
 ## Baseline thickness
 - CCD thickness: 725 um (0.0725 cm).
 - Defined in `main/src/B02DetectorConstruction.cc`:
-  - `BuildPrimitiveGeometry`: `halfZ = 0.3625 * mm` (0.725 mm total).
-  - `BuildCCDOverlay`: `halfZ = 0.3625 * mm` (0.725 mm total).
+- `BuildPrimitiveGeometry`: `halfZ = 0.35 * mm` (0.7 mm total).
+- `BuildCCDOverlay`: `halfZ = 0.35 * mm` (0.7 mm total).
 - Debug print: `/sim/ccd/printInfo true` (enabled in `main/macros/run_tierB_paper_default_1M.mac`).
 
 ## Geant4 run (50k throws)

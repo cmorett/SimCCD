@@ -536,7 +536,7 @@ G4LogicalVolume* B02DetectorConstruction::BuildPrimitiveGeometry() {
   constexpr G4double kCCDActiveSide = 5.461 * cm;
   constexpr G4double halfX = 0.5 * kCCDActiveSide;
   constexpr G4double halfY = 0.5 * kCCDActiveSide;
-  constexpr G4double halfZ = 0.3625 * mm;
+  constexpr G4double halfZ = 0.35 * mm;
 
   auto* solid = new G4Box("PrimitiveSensor", halfX, halfY, halfZ);
   auto* logical = new G4LogicalVolume(solid, si, "PrimitiveSensorLogical");
@@ -669,7 +669,7 @@ G4LogicalVolume* B02DetectorConstruction::BuildCadGeometry() {
            << fCCDOverlayCenter.z() / mm << ") mm" << G4endl;
     const G4ThreeVector span = boundsMax - boundsMin;
     const G4ThreeVector halfSpan = 0.5 * span;
-    const G4ThreeVector overlayHalf(0.5 * 5.461 * cm, 0.5 * 5.461 * cm, 0.3625 * mm);
+    const G4ThreeVector overlayHalf(0.5 * 5.461 * cm, 0.5 * 5.461 * cm, 0.35 * mm);
     const bool overlayFits = (overlayHalf.x() <= halfSpan.x()) &&
                              (overlayHalf.y() <= halfSpan.y()) &&
                              (overlayHalf.z() <= halfSpan.z());
@@ -830,7 +830,7 @@ void B02DetectorConstruction::BuildCCDOverlay() {
 
   const G4double halfX = 0.5 * 5.461 * cm;
   const G4double halfY = 0.5 * 5.461 * cm;
-  const G4double halfZ = 0.3625 * mm;  // 0.725 mm total thickness
+  const G4double halfZ = 0.35 * mm;  // 0.7 mm total thickness
 
   auto* solid = new G4Box("CCDOverlay", halfX, halfY, halfZ);
   fCCDOverlayLogical = new G4LogicalVolume(solid, si, "CCDOverlayLogical");

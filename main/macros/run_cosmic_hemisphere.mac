@@ -1,0 +1,14 @@
+# Cosmic muons from the original hemisphere/tangent-plane model.
+# Uses Smith-Duller energy sampling by default (useFixedEnergy=false).
+
+/generator/SmithActivation true
+/generator/useFixedEnergy false
+/generator/thetaMax 90 deg
+/generator/radius 8.0
+/generator/px 5.461
+/generator/py 5.461
+/generator/impactPlaneZ 0 cm
+
+/run/verbose 1
+/run/initialize
+/run/beamOn 10000

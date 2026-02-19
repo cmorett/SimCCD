@@ -39,9 +39,8 @@ main/build/Release/b02_executable.exe --no-vis --geometry primitive main/macros/
 - `main/macros/run_tierB_cosmic_muons.mac` – Tier B cosmic muons with Modified Gaisser sampling on an extended source plane (nontrivial hit/miss fraction).
 - `main/macros/run_tierB_paper_default_1M.mac` – paper defaults for Tier B (10×10 cm plane at z=8 cm, Emin=1 GeV, muon charge ratio 1.25, overburden/cuts off).
 
-## Cosmic muon generator modes
-- Legacy (default): `forced_footprint` keeps the back-projected, mostly-hits CCD generator.
-- Tier B: `tierB_plane_flux` samples direction+energy from Guan2015 Modified Gaisser with a configurable source plane and optional auto-sizing. Use the macros above or set `/generator/muonMode tierB_plane_flux` plus plane/energy/charge commands. Stores per-event weights/livetime for rate conversion. See `docs/muon_sampling.md` for details.
+## Cosmic muon generator mode
+- Hemisphere (default): back-projects through the 5.461 cm CCD footprint using accept–reject sampling with pdf ∝ cos²θ sinθ (uniform φ) and the Smith–Duller spectrum by default. This is the only supported mode; the experimental Tier B plane flux source has been disabled in this branch.
 
 ## Scripts
 - `scripts/validate_geometry.py` – fails on overlap/navigation warnings.
